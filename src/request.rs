@@ -15,7 +15,7 @@ pub(crate) struct PreparedRequest {
     pub method: String,
     pub url: String,
     pub headers: HeaderMap,
-    pub body: Option<Vec<u8>>,
+    pub body: Option<bytes::Bytes>,
     pub timeout: Duration,
 }
 
@@ -45,7 +45,7 @@ pub(crate) fn prepare(
             let bytes = serde_json::to_vec(value)
                 .map_err(|_| Error::sdk("The request body could not be encoded as JSON"))?;
             set_header(&mut headers, CONTENT_TYPE_HEADER, JSON_CONTENT_TYPE)?;
-            Some(bytes)
+            Some(bytes::Bytes::from(bytes))
         }
         None => None,
     };

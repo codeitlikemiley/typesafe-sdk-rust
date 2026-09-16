@@ -72,7 +72,8 @@ Constructor values win over environment variables. Whitespace-only environment v
 | API key | `TYPESAFE_API_KEY` | required |
 | Base URL | `TYPESAFE_BASE_URL` | `https://api.typesafe.ai` |
 | Model | `TYPESAFE_DEFAULT_MODEL` | `jev-latest` |
-| Timeout | — | 10 seconds per attempt |
+| Timeout | - | 10 seconds per attempt |
+| Log level | `TYPESAFE_LOG_LEVEL` | unset. Values are `debug`, `info`, `warn`, `error`, `off`. Secret headers are redacted. |
 
 ```rust
 use std::time::Duration;

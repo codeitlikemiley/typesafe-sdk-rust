@@ -11,6 +11,7 @@ mod config;
 mod constants;
 mod error;
 mod json;
+mod logging;
 mod question;
 mod request;
 mod retry;

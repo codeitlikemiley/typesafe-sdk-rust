@@ -34,3 +34,12 @@ pub(crate) const RETRY_COUNT_HEADER: &str = "x-typesafe-retry-count";
 pub(crate) const REQUEST_ID_HEADER: &str = "x-typesafe-request-id";
 pub(crate) const RETRY_AFTER_HEADER: &str = "retry-after";
 pub(crate) const RETRY_AFTER_MS_HEADER: &str = "retry-after-ms";
+
+pub(crate) const SECRET_HEADERS: &[&str] = &[
+    "authorization",
+    "proxy-authorization",
+    "x-api-key",
+    "api-key",
+    "cookie",
+    "set-cookie",
+];

@@ -79,6 +79,7 @@ impl ClientBuilder {
     }
 
     pub fn build(self) -> Result<Client, Error> {
+        crate::logging::setup();
         if let Some(retry) = &self.retry {
             retry.validate()?;
         }
@@ -146,13 +147,11 @@ impl Client {
     {
         let mut body = Map::new();
         body.insert("state".to_string(), Value::from(state.into_state()?));
-        body.insert(
-            "model".to_string(),
-            Value::String(
-                opts.model
-                    .unwrap_or_else(|| self.config.default_model.clone()),
-            ),
-        );
+        let model = opts
+            .model
+            .as_deref()
+            .unwrap_or(self.config.default_model.as_str());
+        body.insert("model".to_string(), Value::String(model.to_string()));
         let questions = normalize_questions(questions)?;
         body.insert(
             "questions".to_string(),
@@ -167,9 +166,14 @@ impl Client {
             opts.timeout,
             &opts.extra_headers,
         )?;
-        let retry = opts.retry.unwrap_or_else(|| self.retry.clone());
-        retry.validate()?;
-        let (status, headers, endpoint, bytes) = self.send(request, &retry).await?;
+        let retry = match &opts.retry {
+            Some(policy) => {
+                policy.validate()?;
+                policy
+            }
+            None => &self.retry,
+        };
+        let (status, headers, endpoint, bytes) = self.send(request, retry).await?;
         decode_system_one(status, headers, Some(endpoint), bytes)
     }
 
@@ -186,9 +190,14 @@ impl Client {
             opts.timeout,
             &opts.extra_headers,
         )?;
-        let retry = opts.retry.unwrap_or_else(|| self.retry.clone());
-        retry.validate()?;
-        let (status, headers, endpoint, bytes) = self.send(request, &retry).await?;
+        let retry = match &opts.retry {
+            Some(policy) => {
+                policy.validate()?;
+                policy
+            }
+            None => &self.retry,
+        };
+        let (status, headers, endpoint, bytes) = self.send(request, retry).await?;
         decode_models(status, headers, Some(endpoint), bytes)
     }
 
@@ -217,6 +226,13 @@ impl Client {
             match result {
                 Ok(success) => return Ok(success),
                 Err(error) if retry.retryable(&error) && attempt < retry.max_retries => {
+                    log::info!(
+                        target: "typesafe_sdk",
+                        "{} {} retry {}",
+                        request.method,
+                        request.url,
+                        attempt + 1
+                    );
                     let wait = retry.wait(attempt + 1, &error, fastrand_jitter());
                     if let Some(budget) = retry.timeout {
                         if started.elapsed() + wait >= budget {
@@ -244,11 +260,21 @@ impl Client {
                 })?,
                 &request.url,
             )
-            .headers(headers)
             .timeout(request.timeout);
+        if log::log_enabled!(target: "typesafe_sdk", log::Level::Debug) {
+            log::debug!(
+                target: "typesafe_sdk",
+                "{} {} -> headers={:?}",
+                request.method,
+                request.url,
+                crate::logging::redact(&headers)
+            );
+        }
+        builder = builder.headers(headers);
         if let Some(body) = &request.body {
             builder = builder.body(body.clone());
         }
+        let started = Instant::now();
         let response = builder
             .send()
             .await
@@ -260,6 +286,15 @@ impl Client {
             .bytes()
             .await
             .map_err(map_reqwest_error(request.timeout))?;
+        let request_id =
+            crate::error::header_str(&headers, crate::constants::REQUEST_ID_HEADER).unwrap_or("-");
+        log::info!(
+            target: "typesafe_sdk",
+            "{} {} <- {status} in {:.0}ms (request {request_id})",
+            request.method,
+            request.url,
+            started.elapsed().as_secs_f64() * 1000.0
+        );
         Ok((status, headers, endpoint, bytes))
     }
 }
