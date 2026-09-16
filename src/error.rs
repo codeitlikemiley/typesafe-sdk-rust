@@ -1,313 +1,392 @@
-//! SDK error types and HTTP error mapping.
-
-use std::collections::HashMap;
 use std::fmt;
+use std::time::Duration;
 
-use httpdate::parse_http_date;
+use http::HeaderMap;
 use serde_json::Value;
 
-use crate::constants::{MAX_ERROR_BODY_LENGTH, REQUEST_ID_HEADER};
+use crate::constants::MAX_ERROR_BODY_LENGTH;
 
-/// Base error for SDK failures.
-#[derive(Debug, thiserror::Error)]
-#[error("{message}")]
-pub struct TypeSafeError {
-    message: String,
-}
-
-impl TypeSafeError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
-    }
-}
-
-/// An unsuccessful HTTP response with body and request metadata.
+/// A client, transport, or API failure.
 #[derive(Debug)]
-pub struct TypeSafeApiError {
-    pub status: u16,
-    pub body: Option<Value>,
-    pub headers: HashMap<String, String>,
-    message: String,
-    pub endpoint: Option<String>,
+pub enum Error {
+    Sdk(String),
+    Connection { message: String },
+    Timeout { timeout: Duration },
+    Api(Box<ApiError>),
 }
 
-impl TypeSafeApiError {
-    pub fn new(
-        status: u16,
-        body: Option<Value>,
-        headers: HashMap<String, String>,
-        message: Option<String>,
-        endpoint: Option<String>,
-    ) -> Self {
-        let message = message.unwrap_or_else(|| extract_message(&body).unwrap_or_else(|| {
-            match &body {
-                None => "status code (no body)".to_string(),
-                Some(Value::String(s)) => truncate(s.clone()),
-                Some(v) => truncate(v.to_string()),
-            }
-        }));
-        Self {
-            status,
-            body,
-            headers,
-            message,
-            endpoint,
+impl Error {
+    pub(crate) fn sdk(message: impl Into<String>) -> Self {
+        Self::Sdk(message.into())
+    }
+
+    pub fn api(&self) -> Option<&ApiError> {
+        match self {
+            Self::Api(error) => Some(error),
+            _ => None,
         }
     }
-
-    pub fn request_id(&self) -> Option<&str> {
-        self.headers
-            .get(REQUEST_ID_HEADER)
-            .map(|s| s.as_str())
-            .or_else(|| {
-                self.headers
-                    .iter()
-                    .find(|(k, _)| k.eq_ignore_ascii_case(REQUEST_ID_HEADER))
-                    .map(|(_, v)| v.as_str())
-            })
-    }
 }
 
-impl fmt::Display for TypeSafeApiError {
+impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut message = format!("{} {}", self.status, self.message);
-        if let Some(endpoint) = &self.endpoint {
-            message = format!("{}: {}", endpoint, message);
+        match self {
+            Self::Sdk(message) => f.write_str(message),
+            Self::Connection { message } => write!(f, "Connection error: {message}"),
+            Self::Timeout { timeout } => {
+                write!(
+                    f,
+                    "Request timed out (timeout={:.1}).",
+                    timeout.as_secs_f64()
+                )
+            }
+            Self::Api(error) => fmt::Display::fmt(error, f),
         }
-        if let Some(id) = self.request_id() {
-            message = format!("{} (request_id={})", message, id);
+    }
+}
+
+impl std::error::Error for Error {}
+
+/// An unsuccessful HTTP response, or a successful response that failed to decode.
+#[derive(Debug, Clone)]
+pub struct ApiError {
+    pub status: u16,
+    pub kind: ApiErrorKind,
+    pub body: Option<ErrorBody>,
+    pub headers: HeaderMap,
+    pub endpoint: Option<String>,
+    pub field_path: Option<String>,
+    pub retry_after: Option<Duration>,
+    message: String,
+}
+
+impl ApiError {
+    pub fn request_id(&self) -> Option<&str> {
+        header_str(&self.headers, crate::constants::REQUEST_ID_HEADER)
+    }
+
+    pub fn retry_after_ms(&self) -> Option<f64> {
+        self.retry_after.map(|delay| delay.as_secs_f64() * 1000.0)
+    }
+}
+
+impl fmt::Display for ApiError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut message = if self.message.is_empty() {
+            self.status.to_string()
+        } else {
+            format!("{} {}", self.status, self.message)
+        };
+        if let Some(endpoint) = &self.endpoint {
+            message = format!("{endpoint}: {message}");
+        }
+        if let Some(request_id) = self.request_id() {
+            message.push_str(" (request_id=");
+            message.push_str(request_id);
+            message.push(')');
         }
         f.write_str(&message)
     }
 }
 
-impl std::error::Error for TypeSafeApiError {}
-
-#[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub struct TypeSafeBadRequestError(pub TypeSafeApiError);
-
-#[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub struct TypeSafeAuthenticationError(pub TypeSafeApiError);
-
-#[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub struct TypeSafePermissionDeniedError(pub TypeSafeApiError);
-
-#[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub struct TypeSafeNotFoundError(pub TypeSafeApiError);
-
-#[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub struct TypeSafeUnprocessableEntityError(pub TypeSafeApiError);
-
-#[derive(Debug)]
-pub struct TypeSafeRateLimitError {
-    pub inner: TypeSafeApiError,
-    pub retry_after_ms: Option<f64>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApiErrorKind {
+    BadRequest,
+    Authentication,
+    PermissionDenied,
+    NotFound,
+    UnprocessableEntity,
+    RateLimited,
+    Internal,
+    ResponseValidation,
+    Other,
 }
 
-impl fmt::Display for TypeSafeRateLimitError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.inner.fmt(f)
+impl ApiErrorKind {
+    pub fn from_status(status: u16) -> Self {
+        match status {
+            400 => Self::BadRequest,
+            401 => Self::Authentication,
+            403 => Self::PermissionDenied,
+            404 => Self::NotFound,
+            422 => Self::UnprocessableEntity,
+            429 => Self::RateLimited,
+            code if code >= 500 => Self::Internal,
+            _ => Self::Other,
+        }
     }
 }
 
-impl std::error::Error for TypeSafeRateLimitError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.inner)
+#[derive(Debug, Clone, PartialEq)]
+pub enum ErrorBody {
+    Json(Value),
+    Text(String),
+}
+
+pub(crate) fn deserialize_body(content: &[u8]) -> Option<ErrorBody> {
+    if content.is_empty() {
+        return None;
+    }
+    match serde_json::from_slice::<Value>(content) {
+        Ok(Value::Null) => None,
+        Ok(value) => Some(ErrorBody::Json(value)),
+        Err(_) => Some(ErrorBody::Text(
+            String::from_utf8_lossy(content).into_owned(),
+        )),
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub struct TypeSafeInternalServerError(pub TypeSafeApiError);
-
-#[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub struct TypeSafeApiConnectionError(pub String);
-
-#[derive(Debug, thiserror::Error)]
-#[error("Request timed out (timeout={timeout_secs}s).")]
-pub struct TypeSafeApiTimeoutError {
-    pub timeout_secs: f64,
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub struct TypeSafeApiResponseValidationError(pub TypeSafeApiError);
-
-impl TypeSafeApiResponseValidationError {
-    pub fn field_path(&self) -> &str {
-        &self.0.message
-    }
-}
-
-/// Internal error wrapper for retry logic.
-#[derive(Debug)]
-pub enum ApiFailure {
-    Api(TypeSafeApiError),
-    Connection(TypeSafeApiConnectionError),
-    Timeout(TypeSafeApiTimeoutError),
-    Validation(TypeSafeApiResponseValidationError),
-    Sdk(TypeSafeError),
-}
-
-impl From<TypeSafeError> for ApiFailure {
-    fn from(e: TypeSafeError) -> Self {
-        ApiFailure::Sdk(e)
-    }
-}
-
-pub fn api_error(
+pub(crate) fn api_error(
     status: u16,
-    body: Option<Value>,
-    headers: HashMap<String, String>,
+    body: Option<ErrorBody>,
+    headers: HeaderMap,
     endpoint: Option<String>,
-) -> TypeSafeApiError {
-    let err = TypeSafeApiError::new(status, body, headers, None, endpoint);
-    err
+) -> Error {
+    let kind = ApiErrorKind::from_status(status);
+    let retry_after = parse_retry_after(&headers);
+    let message = error_message(&body);
+    Error::Api(Box::new(ApiError {
+        status,
+        kind,
+        body,
+        headers,
+        endpoint,
+        field_path: None,
+        retry_after,
+        message,
+    }))
 }
 
-pub fn map_status_error(err: TypeSafeApiError) -> Box<dyn std::error::Error + Send + Sync> {
-    let status = err.status;
-    if status == 400 {
-        return Box::new(TypeSafeBadRequestError(err));
-    }
-    if status == 401 {
-        return Box::new(TypeSafeAuthenticationError(err));
-    }
-    if status == 403 {
-        return Box::new(TypeSafePermissionDeniedError(err));
-    }
-    if status == 404 {
-        return Box::new(TypeSafeNotFoundError(err));
-    }
-    if status == 422 {
-        return Box::new(TypeSafeUnprocessableEntityError(err));
-    }
-    if status == 429 {
-        let retry_after_ms = parse_retry_after(&err.headers);
-        return Box::new(TypeSafeRateLimitError {
-            inner: err,
-            retry_after_ms,
-        });
-    }
-    if status >= 500 {
-        return Box::new(TypeSafeInternalServerError(err));
-    }
-    Box::new(err)
+pub(crate) fn validation_error(
+    status: u16,
+    body: Option<ErrorBody>,
+    headers: HeaderMap,
+    endpoint: Option<String>,
+    field_path: String,
+) -> Error {
+    Error::Api(Box::new(ApiError {
+        status,
+        kind: ApiErrorKind::ResponseValidation,
+        body,
+        headers,
+        endpoint,
+        field_path: Some(field_path.clone()),
+        retry_after: None,
+        message: format!("Invalid response data at '{field_path}'."),
+    }))
 }
 
-pub fn parse_retry_after(headers: &HashMap<String, String>) -> Option<f64> {
-    let get = |name: &str| -> Option<String> {
-        headers
-            .get(name)
-            .cloned()
-            .or_else(|| {
-                headers
-                    .iter()
-                    .find(|(k, _)| k.eq_ignore_ascii_case(name))
-                    .map(|(_, v)| v.clone())
-            })
-    };
+fn error_message(body: &Option<ErrorBody>) -> String {
+    match body {
+        None => "status code (no body)".to_string(),
+        Some(ErrorBody::Text(text)) => truncate(text),
+        Some(ErrorBody::Json(value)) => match extract_message(value) {
+            Some(detail) if !detail.is_empty() => detail,
+            _ => truncate(&compact_json(value)),
+        },
+    }
+}
 
-    for (name, multiplier) in [(RETRY_AFTER_MS_HEADER, 1.0), (RETRY_AFTER_HEADER, 1000.0)] {
-        let raw = get(name)?;
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            continue;
+pub(crate) fn extract_message(body: &Value) -> Option<String> {
+    if let Value::String(text) = body {
+        return if text.is_empty() {
+            None
+        } else {
+            Some(text.clone())
+        };
+    }
+    let object = body.as_object()?;
+    match object.get("error") {
+        Some(Value::String(error)) => return Some(error.clone()),
+        Some(Value::Object(error)) => {
+            if let Some(Value::String(message)) = error.get("message") {
+                return Some(message.clone());
+            }
         }
-        if let Ok(value) = trimmed.parse::<f64>() {
-            if value.is_finite() {
-                if value >= 0.0 {
-                    let delay = value * multiplier;
-                    if delay.is_finite() {
-                        return Some(delay);
+        _ => {}
+    }
+    if let Some(Value::String(message)) = object.get("message") {
+        return Some(message.clone());
+    }
+    match object.get("detail") {
+        Some(Value::String(detail)) => Some(detail.clone()),
+        Some(Value::Object(detail)) => detail
+            .get("message")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        Some(Value::Array(entries)) => {
+            let parts: Vec<String> = entries
+                .iter()
+                .filter_map(|entry| {
+                    let entry = entry.as_object()?;
+                    let msg = entry.get("msg")?.as_str()?;
+                    let path = match entry.get("loc") {
+                        Some(Value::Array(loc)) => loc
+                            .iter()
+                            .filter_map(|item| match item {
+                                Value::String(text) if text == "body" => None,
+                                Value::String(text) => Some(text.clone()),
+                                Value::Number(number) => Some(number.to_string()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("."),
+                        _ => String::new(),
+                    };
+                    if path.is_empty() {
+                        Some(msg.to_string())
+                    } else {
+                        Some(format!("{path}: {msg}"))
                     }
-                } else if name == RETRY_AFTER_HEADER {
-                    return None;
-                }
-            }
-            continue;
-        }
-        if name == RETRY_AFTER_HEADER {
-            if let Ok(dt) = parse_http_date(trimmed) {
-                let now = std::time::SystemTime::now();
-                let delay_ms = dt
-                    .duration_since(now)
-                    .unwrap_or_default()
-                    .as_secs_f64()
-                    * 1000.0;
-                return Some(delay_ms.max(0.0));
-            }
-        }
-    }
-    None
-}
-
-use crate::constants::{RETRY_AFTER_HEADER, RETRY_AFTER_MS_HEADER};
-
-fn extract_message(body: &Option<Value>) -> Option<String> {
-    let body = body.as_ref()?;
-    if let Value::String(s) = body {
-        return if s.is_empty() { None } else { Some(s.clone()) };
-    }
-    let obj = body.as_object()?;
-    if let Some(Value::String(s)) = obj.get("error") {
-        return Some(s.clone());
-    }
-    if let Some(Value::Object(err)) = obj.get("error") {
-        if let Some(Value::String(s)) = err.get("message") {
-            return Some(s.clone());
-        }
-    }
-    if let Some(Value::String(s)) = obj.get("message") {
-        return Some(s.clone());
-    }
-    if let Some(Value::String(s)) = obj.get("detail") {
-        return Some(s.clone());
-    }
-    if let Some(Value::Object(detail)) = obj.get("detail") {
-        if let Some(Value::String(s)) = detail.get("message") {
-            return Some(s.clone());
-        }
-    }
-    if let Some(Value::Array(detail)) = obj.get("detail") {
-        let mut parts = Vec::new();
-        for entry in detail {
-            let entry = entry.as_object()?;
-            let msg = entry.get("msg")?.as_str()?;
-            let path = match entry.get("loc").and_then(|l| l.as_array()) {
-                Some(loc) => loc
-                    .iter()
-                    .filter(|item| item.as_str() != Some("body"))
-                    .map(|item| item.to_string())
-                    .collect::<Vec<_>>()
-                    .join("."),
-                None => String::new(),
-            };
-            parts.push(if path.is_empty() {
-                msg.to_string()
+                })
+                .collect();
+            if parts.is_empty() {
+                None
             } else {
-                format!("{}: {}", path, msg)
-            });
+                Some(parts.join("; "))
+            }
         }
-        if !parts.is_empty() {
-            return Some(parts.join("; "));
+        _ => None,
+    }
+}
+
+fn compact_json(value: &Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
+}
+
+fn truncate(raw: &str) -> String {
+    if raw.chars().count() > MAX_ERROR_BODY_LENGTH {
+        let clipped: String = raw.chars().take(MAX_ERROR_BODY_LENGTH).collect();
+        format!("{clipped}…")
+    } else {
+        raw.to_string()
+    }
+}
+
+/// Server-requested wait. Matches the Python SDK's millisecond parser, then converts to a duration.
+pub(crate) fn parse_retry_after(headers: &HeaderMap) -> Option<Duration> {
+    if let Some(raw) = header_str(headers, crate::constants::RETRY_AFTER_MS_HEADER) {
+        if let Some(millis) = parse_numeric_millis(raw, 1.0, false) {
+            return Some(Duration::from_secs_f64(millis / 1000.0));
+        }
+    }
+    if let Some(raw) = header_str(headers, crate::constants::RETRY_AFTER_HEADER) {
+        if let Some(millis) = parse_numeric_millis(raw, 1000.0, true) {
+            return Some(Duration::from_secs_f64(millis / 1000.0));
+        }
+        if let Some(delay) = parse_http_date_delay(raw) {
+            return Some(delay);
         }
     }
     None
 }
 
-fn truncate(raw: String) -> String {
-    if raw.len() > MAX_ERROR_BODY_LENGTH {
-        format!("{}…", raw.chars().take(MAX_ERROR_BODY_LENGTH).collect::<String>())
+fn parse_numeric_millis(raw: &str, multiplier: f64, empty_is_zero: bool) -> Option<f64> {
+    let trimmed = raw.trim();
+    let value = if trimmed.is_empty() {
+        if empty_is_zero {
+            0.0
+        } else {
+            return None;
+        }
     } else {
-        raw
+        trimmed.parse::<f64>().ok()?
+    };
+    if !value.is_finite() {
+        return None;
+    }
+    if value < 0.0 {
+        return None;
+    }
+    let delay = value * multiplier;
+    if !delay.is_finite() {
+        return None;
+    }
+    Some(delay)
+}
+
+fn parse_http_date_delay(raw: &str) -> Option<Duration> {
+    let parsed = httpdate::parse_http_date(raw).ok()?;
+    let now = std::time::SystemTime::now();
+    match parsed.duration_since(now) {
+        Ok(delay) => Some(delay),
+        Err(_) => Some(Duration::ZERO),
+    }
+}
+
+pub(crate) fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name).and_then(|value| value.to_str().ok())
+}
+
+pub(crate) fn format_endpoint(method: &str, url: &str) -> String {
+    let without_fragment = url.split('#').next().unwrap_or(url);
+    let without_query = without_fragment
+        .split('?')
+        .next()
+        .unwrap_or(without_fragment);
+    format!("{method} {}", strip_userinfo(without_query))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn extract_message_order() {
+        assert_eq!(
+            extract_message(&json!({"error": "error", "message": "message", "detail": "detail"})),
+            Some("error".to_string())
+        );
+        assert_eq!(
+            extract_message(&json!({"error": {"message": "nested error"}, "message": "message"})),
+            Some("nested error".to_string())
+        );
+        assert_eq!(
+            extract_message(&json!({"message": "message", "detail": "detail"})),
+            Some("message".to_string())
+        );
+        assert_eq!(
+            extract_message(&json!({"detail": "detail"})),
+            Some("detail".to_string())
+        );
+        assert_eq!(
+            extract_message(&json!({"detail": {"message": "nested detail"}})),
+            Some("nested detail".to_string())
+        );
+        assert_eq!(
+            extract_message(&json!({
+                "detail": [
+                    {"loc": ["body", "questions", "q", "score", "criteria", 0], "msg": "Invalid"},
+                    {"msg": "Missing"},
+                    {}
+                ]
+            })),
+            Some("questions.q.score.criteria.0: Invalid; Missing".to_string())
+        );
+    }
+
+    #[test]
+    fn endpoint_drops_userinfo_and_query() {
+        assert_eq!(
+            format_endpoint(
+                "GET",
+                "https://user:password@example.test/v1/models?token=secret#fragment"
+            ),
+            "GET https://example.test/v1/models"
+        );
+    }
+}
+
+fn strip_userinfo(url: &str) -> String {
+    match url.split_once("://") {
+        Some((scheme, rest)) => {
+            if let Some(at) = rest.find('@') {
+                format!("{scheme}://{}", &rest[at + 1..])
+            } else {
+                url.to_string()
+            }
+        }
+        None => url.to_string(),
     }
 }

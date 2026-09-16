@@ -1,21 +1,20 @@
-//! Configuration resolution from explicit options and environment.
+use std::time::Duration;
 
-use std::collections::HashMap;
-use std::env;
+use http::HeaderMap;
 
 use crate::constants::{
     API_KEY_ENV, BASE_URL_ENV, DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_MODEL_ENV,
     DEFAULT_TIMEOUT_SECS,
 };
-use crate::error::TypeSafeError;
+use crate::error::Error;
 
 #[derive(Clone, Debug)]
-pub struct Config {
+pub(crate) struct Config {
     pub api_key: String,
     pub base_url: String,
     pub default_model: String,
-    pub timeout_secs: f64,
-    pub default_headers: HashMap<String, String>,
+    pub timeout: Duration,
+    pub default_headers: HeaderMap,
 }
 
 impl Config {
@@ -23,53 +22,62 @@ impl Config {
         api_key: Option<String>,
         base_url: Option<String>,
         default_model: Option<String>,
-        timeout_secs: Option<f64>,
-        default_headers: Option<HashMap<String, String>>,
-    ) -> Result<Self, TypeSafeError> {
-        let key = resolve_env(api_key, API_KEY_ENV, None);
-        let key = key.ok_or_else(|| {
-            TypeSafeError::new(format!(
-                "No API key was provided. Pass api_key or set the {} environment variable.",
-                API_KEY_ENV
+        timeout: Option<Duration>,
+        default_headers: HeaderMap,
+    ) -> Result<Self, Error> {
+        let api_key = resolve_env(api_key, API_KEY_ENV, None).ok_or_else(|| {
+            Error::sdk(format!(
+                "No API key was provided. Pass api_key or set the {API_KEY_ENV} environment variable."
             ))
         })?;
-        let resolved_base = resolve_env(base_url, BASE_URL_ENV, Some(DEFAULT_BASE_URL))
-            .unwrap_or(DEFAULT_BASE_URL.to_string());
-        let resolved_model = resolve_env(default_model, DEFAULT_MODEL_ENV, Some(DEFAULT_MODEL))
-            .unwrap_or(DEFAULT_MODEL.to_string());
-        let timeout = resolve_timeout(
-            timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS),
-        )?;
+        let base_url = resolve_env(base_url, BASE_URL_ENV, Some(DEFAULT_BASE_URL.to_string()))
+            .expect("default base URL is present")
+            .trim_end_matches('/')
+            .to_string();
+        let default_model = resolve_env(
+            default_model,
+            DEFAULT_MODEL_ENV,
+            Some(DEFAULT_MODEL.to_string()),
+        )
+        .expect("default model is present");
         Ok(Self {
-            api_key: key,
-            base_url: resolved_base.trim_end_matches('/').to_string(),
-            default_model: resolved_model,
-            timeout_secs: timeout,
-            default_headers: default_headers.unwrap_or_default(),
+            api_key,
+            base_url,
+            default_model,
+            timeout: resolve_timeout(
+                timeout.unwrap_or(Duration::from_secs_f64(DEFAULT_TIMEOUT_SECS)),
+            )?,
+            default_headers,
         })
     }
 }
 
-fn resolve_env(value: Option<String>, env: &str, default: Option<&str>) -> Option<String> {
-    if let Some(v) = value {
-        let trimmed = v.trim();
-        if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
+pub(crate) fn resolve_env(
+    value: Option<String>,
+    env: &str,
+    default: Option<String>,
+) -> Option<String> {
+    if let Some(value) = value {
+        return Some(value);
+    }
+    match std::env::var(env) {
+        Ok(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                default
+            } else {
+                Some(trimmed.to_string())
+            }
         }
+        Err(_) => default,
     }
-    let from_env = env::var(env).unwrap_or_default();
-    let trimmed = from_env.trim();
-    if !trimmed.is_empty() {
-        return Some(trimmed.to_string());
-    }
-    default.map(|s| s.to_string())
 }
 
-pub fn resolve_timeout(timeout_secs: f64) -> Result<f64, TypeSafeError> {
-    if !timeout_secs.is_finite() || timeout_secs <= 0.0 {
-        return Err(TypeSafeError::new(
+pub(crate) fn resolve_timeout(timeout: Duration) -> Result<Duration, Error> {
+    if timeout.is_zero() {
+        return Err(Error::sdk(
             "timeout must be a positive, finite number of seconds.",
         ));
     }
-    Ok(timeout_secs)
+    Ok(timeout)
 }

@@ -1,27 +1,40 @@
 [package]
 name = "typesafe-sdk"
-version = "0.6.0"
+version = "0.1.0"
 edition = "2021"
+rust-version = "1.83"
+license = "MIT"
 description = "Rust SDK for the TypeSafe AI API"
 readme = "README.md"
-license = "MIT"
-authors = ["TypeSafe AI <support@typesafe.ai>"]
 keywords = ["typesafe", "sdk", "api", "ai"]
-categories = ["api-bindings", "web-programming::http-client"]
-repository = "https://github.com/typesafe-ai/typesafe-sdk-rust"
-documentation = "https://docs.rs/typesafe-sdk"
-homepage = "https://typesafe.ai"
+categories = ["api-bindings", "asynchronous"]
+authors = ["TypeSafe AI"]
+
+[features]
+default = []
+blocking = ["tokio/rt", "tokio/net"]
 
 [dependencies]
-reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-thiserror = "2"
+bytes = "1"
+encoding_rs = "=0.8.35"
+fastrand = "2"
+http = "0.2"
 httpdate = "1"
+idna = "=1.0.3"
+idna_adapter = "=1.1.0"
+indexmap = { version = "=2.7.1", features = ["serde"] }
 log = "0.4"
-rand = "0.8"
-tokio = { version = "1", features = ["rt", "time", "macros", "rt-multi-thread"] }
+reqwest = { version = "=0.11.27", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "=1.0.134", features = ["preserve_order"] }
+tokio = { version = "1", default-features = false, features = ["time"] }
+url = "=2.5.4"
 
 [dev-dependencies]
-wiremock = "0.6"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+serde_json = { version = "=1.0.134", features = ["preserve_order"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+wiremock = "=0.5.22"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
