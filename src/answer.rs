@@ -139,27 +139,6 @@ impl SystemOneResponse {
             .and_then(Answer::as_score)
             .ok_or_else(|| Error::sdk(format!("No score answer named \"{name}\".")))
     }
-
-    pub fn nouls(&self) -> IndexMap<String, &NoulAnswer> {
-        self.answers
-            .iter()
-            .filter_map(|(name, answer)| answer.as_noul().map(|value| (name.clone(), value)))
-            .collect()
-    }
-
-    pub fn choices(&self) -> IndexMap<String, &ChoiceAnswer> {
-        self.answers
-            .iter()
-            .filter_map(|(name, answer)| answer.as_choice().map(|value| (name.clone(), value)))
-            .collect()
-    }
-
-    pub fn scores(&self) -> IndexMap<String, &ScoreAnswer> {
-        self.answers
-            .iter()
-            .filter_map(|(name, answer)| answer.as_score().map(|value| (name.clone(), value)))
-            .collect()
-    }
 }
 
 pub(crate) fn decode_system_one(

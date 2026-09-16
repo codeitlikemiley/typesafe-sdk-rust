@@ -106,3 +106,14 @@ Integration against the live API is not part of `cargo test`. Point `Client::bui
 ## Python parity
 
 Behavior targets [typesafe-sdk-python](https://github.com/typesafe-ai/typesafe-sdk-python) 0.6.0 and OpenAPI 0.2.0 (`POST /v1/systemone`, `GET /v1/models`). The Rust crate is 0.1.0 because it is a new package, not a version bump of the Python release.
+
+Look up one answer with `noul("name")`, `choice("name")`, or `score("name")`. Python's `result.nouls["name"]` maps to that call. Scan mixed types through the public `answers` map. There is no `nouls` dict.
+
+`RetryStatuses::Default` is the Python set `{408, 429, *range(500, 600)}` as a predicate. Pass `RetryStatuses::Custom(set)` to replace it. An empty custom set retries no HTTP status.
+
+These Python pieces stay out of the crate on purpose.
+
+- Tenacity predicates. `Error` variants and `RetryStatuses` decide what retries.
+- OpenAPI codegen. Two endpoints. Hand-written types plus `tests/contract.rs`.
+- Live API tests in `cargo test`. Point `base_url` at a mock.
+- `httpx.Response`. Use `raw_body()` and `request_id()`. `ApiError` keeps headers.

@@ -34,6 +34,6 @@ pub use constants::{
 pub use error::{ApiError, ApiErrorKind, Error, ErrorBody};
 pub use json::{IntoState, JsonContent};
 pub use question::{NoulCriteria, Question};
-pub use retry::RetryPolicy;
+pub use retry::{RetryPolicy, RetryStatuses};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
