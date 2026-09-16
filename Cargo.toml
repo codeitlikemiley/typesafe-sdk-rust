@@ -1,0 +1,27 @@
+[package]
+name = "typesafe-sdk"
+version = "0.6.0"
+edition = "2021"
+description = "Rust SDK for the TypeSafe AI API"
+readme = "README.md"
+license = "MIT"
+authors = ["TypeSafe AI <support@typesafe.ai>"]
+keywords = ["typesafe", "sdk", "api", "ai"]
+categories = ["api-bindings", "web-programming::http-client"]
+repository = "https://github.com/typesafe-ai/typesafe-sdk-rust"
+documentation = "https://docs.rs/typesafe-sdk"
+homepage = "https://typesafe.ai"
+
+[dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+httpdate = "1"
+log = "0.4"
+rand = "0.8"
+tokio = { version = "1", features = ["rt", "time", "macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+wiremock = "0.6"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
