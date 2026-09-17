@@ -352,6 +352,19 @@ pub(crate) fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a s
     headers.get(name).and_then(|value| value.to_str().ok())
 }
 
+fn strip_userinfo(url: &str) -> String {
+    match url.split_once("://") {
+        Some((scheme, rest)) => {
+            if let Some(at) = rest.find('@') {
+                format!("{scheme}://{}", &rest[at + 1..])
+            } else {
+                url.to_string()
+            }
+        }
+        None => url.to_string(),
+    }
+}
+
 pub(crate) fn format_endpoint(method: &str, url: &str) -> String {
     let without_fragment = url.split('#').next().unwrap_or(url);
     let without_query = without_fragment
@@ -409,18 +422,5 @@ mod tests {
             ),
             "GET https://example.test/v1/models"
         );
-    }
-}
-
-fn strip_userinfo(url: &str) -> String {
-    match url.split_once("://") {
-        Some((scheme, rest)) => {
-            if let Some(at) = rest.find('@') {
-                format!("{scheme}://{}", &rest[at + 1..])
-            } else {
-                url.to_string()
-            }
-        }
-        None => url.to_string(),
     }
 }

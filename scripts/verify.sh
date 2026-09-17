@@ -4,8 +4,8 @@ cd "$(dirname "$0")/.."
 cargo fmt --all --check
 cargo check --features mock
 cargo check --features "mock blocking"
-cargo clippy --features mock -- -D warnings
-cargo clippy --features "mock blocking" -- -D warnings
+cargo clippy --all-targets --features mock -- -D warnings
+cargo clippy --all-targets --features "mock blocking" -- -D warnings
 cargo test --features mock
 cargo test --features "mock blocking"
 cargo build --examples --features mock

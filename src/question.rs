@@ -241,6 +241,33 @@ where
     Ok(out)
 }
 
+fn validate_raw(name: &str, map: &Map<String, Value>) -> Result<(), Error> {
+    let type_name = match map.get("type") {
+        Some(Value::String(text)) if !text.is_empty() => text.as_str(),
+        _ => {
+            return Err(Error::sdk(format!(
+                "Question \"{name}\" must be a question object or a dictionary with a nonempty string \"type\"."
+            )));
+        }
+    };
+    if matches!(type_name, "choice" | "score") && !map.contains_key("criteria") {
+        return Err(Error::sdk(format!(
+            "Question \"{name}\" requires \"criteria\"."
+        )));
+    }
+    if type_name == "score" {
+        match map.get("criteria") {
+            Some(Value::Array(items)) if items.is_empty() => {
+                return Err(Error::sdk(format!(
+                    "Score question \"{name}\" has no criteria; at least one score is required."
+                )));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,31 +294,4 @@ mod tests {
         let error = Question::raw(raw).to_wire("rating").unwrap_err();
         assert!(error.to_string().contains("requires \"criteria\""));
     }
-}
-
-fn validate_raw(name: &str, map: &Map<String, Value>) -> Result<(), Error> {
-    let type_name = match map.get("type") {
-        Some(Value::String(text)) if !text.is_empty() => text.as_str(),
-        _ => {
-            return Err(Error::sdk(format!(
-                "Question \"{name}\" must be a question object or a dictionary with a nonempty string \"type\"."
-            )));
-        }
-    };
-    if matches!(type_name, "choice" | "score") && !map.contains_key("criteria") {
-        return Err(Error::sdk(format!(
-            "Question \"{name}\" requires \"criteria\"."
-        )));
-    }
-    if type_name == "score" {
-        match map.get("criteria") {
-            Some(Value::Array(items)) if items.is_empty() => {
-                return Err(Error::sdk(format!(
-                    "Score question \"{name}\" has no criteria; at least one score is required."
-                )));
-            }
-            _ => {}
-        }
-    }
-    Ok(())
 }
