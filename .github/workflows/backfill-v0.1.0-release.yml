@@ -1,0 +1,35 @@
+# One-shot: creates the GitHub Release for the commit that was published as 0.1.0.
+# Remove this workflow after the release exists.
+name: backfill-v0.1.0-release
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/release-backfill-v0.1.0]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 475b676772fb3d6b1db6b7f910994d10eb193711
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.0
+          name: typesafe-sdk 0.1.0
+          target_commitish: 475b676772fb3d6b1db6b7f910994d10eb193711
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            ```toml
+            typesafe-sdk = "0.1.0"
+            ```
+
+            - [crates.io](https://crates.io/crates/typesafe-sdk/0.1.0)
+            - [docs.rs](https://docs.rs/typesafe-sdk/0.1.0)
