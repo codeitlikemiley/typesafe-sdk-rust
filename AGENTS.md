@@ -1,10 +1,6 @@
-# Emit a compiling System One call
+# Call System One from Rust
 
-## Goal
-
-Emit a compiling System One call.
-
-## Add dependencies
+## Dependencies
 
 Add these crates to `Cargo.toml`.
 
@@ -15,29 +11,29 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde_json = "1"
 ```
 
-Write `serde_json = "1"` by hand. Do not `cargo add serde_json` if that pulls a newer patch. This crate pins `serde_json = "=1.0.134"`.
+Write `serde_json = "1"` yourself. Do not run `cargo add serde_json` if that selects a newer patch. This crate pins `serde_json = "=1.0.134"`.
 
-## Set the API key
+## API key
 
 Export `TYPESAFE_API_KEY` before you run the program.
 
-`Client::from_env` fails at runtime if the variable is unset or blank.
+`Client::from_env` returns `Error::Sdk` when the variable is unset or blank.
 
-## Build the client
+## Client
 
-Prefer `Client::from_env`. Call `system_one`. Read answers with `noul`, `choice`, and `score`.
+Use `Client::from_env` when the key is in the environment.
 
 ```rust
 let client = Client::from_env()?;
 ```
 
-If you pass the key in code, call `Client::builder().api_key(...).build()` only.
+To pass the key in code, call `Client::builder().api_key(...).build()`.
 
-Never call `Client::builder().build()`. The builder is typestated. `build` exists only after `api_key`.
+`Client::builder().build()` does not compile. The builder is typestated. `build` exists only after `api_key`.
 
-## Ask named questions
+## Ask questions
 
-Copy this program. Then change the state and the question names.
+Copy this program. Change the state and the question names for your task.
 
 ```rust
 use typesafe_sdk::{Client, Question};
@@ -75,27 +71,27 @@ async fn main() -> Result<(), typesafe_sdk::Error> {
 }
 ```
 
-Build the same program with `cargo build --example system_one`.
+Check the same program with `cargo build --example system_one`.
 
-## Read answers by name
+## Read answers
 
-Call the helper that matches the question type.
+Use the helper that matches the question type.
 
-- `response.noul("billing")?.noul` is an `f64` yes-probability from 0.0 to 1.0. It is not a `bool`.
-- `response.choice("tone")?.choice` is the selected label `String`.
-- `response.score("urgency")?.score` is an `f64` rubric value, not a legend index.
+- `response.noul("billing")?.noul` is an `f64` yes probability from 0.0 to 1.0. It is not a `bool`.
+- `response.choice("tone")?.choice` is the selected label as a `String`.
+- `response.score("urgency")?.score` is an `f64` rubric value. It is not a legend index.
 
 The answer name must match the question name.
 
-There is no `nouls` or `choices` map. Use `response.noul("name")`.
+There is no `nouls` or `choices` map. Call `response.noul("name")`.
 
 Scan mixed types through `response.answers`.
 
-Choice descriptions use `Option<JsonContent>`. Write `Some("Calm".into())`, not `Some("Calm")`.
+Choice descriptions are `Option<JsonContent>`. Write `Some("Calm".into())`, not `Some("Calm")`.
 
-## Call from blocking code
+## Blocking client
 
-If the program cannot be async, enable `blocking`. Use `typesafe_sdk::blocking::Client`. Do not `.await`.
+If the program cannot be async, enable `blocking` and use `typesafe_sdk::blocking::Client`. Do not `.await`.
 
 ```toml
 typesafe-sdk = { version = "0.1", features = ["blocking"] }
@@ -113,21 +109,19 @@ fn main() -> Result<(), typesafe_sdk::Error> {
 }
 ```
 
-## Fix common failures
-
-Work these in order.
+## Common failures
 
 1. There is no `nouls` or `choices` dict. Use `response.noul("name")`, `response.choice("name")`, or `response.score("name")`.
-2. Async code needs Tokio. Add `tokio` with `macros` and `rt-multi-thread`. Use `#[tokio::main]`.
+2. Async code needs Tokio with `macros` and `rt-multi-thread`, plus `#[tokio::main]`.
 3. Set `TYPESAFE_API_KEY` or pass `api_key` on the builder.
 4. Answer names must match question names.
 5. Call `api_key` before `build`. `Client::builder().build()` does not compile.
 6. Enable `features = ["blocking"]` before you import `typesafe_sdk::blocking::Client`.
 7. Do not call `blocking::Client` inside an existing Tokio runtime. It panics.
 8. Treat `noul` as a probability (`f64`), not a boolean.
-9. Pin consumer `serde_json` as `"1"`. A newer exact version fights the crate pin.
+9. Pin consumer `serde_json` as `"1"`. A newer exact version conflicts with the crate pin.
 
-## Read more
+## More reading
 
 - `README.md` for install, env defaults, retries, and Python parity
 - https://docs.rs/typesafe-sdk
