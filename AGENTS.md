@@ -15,6 +15,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde_json = "1"
 ```
 
+Write `serde_json = "1"` by hand. Do not `cargo add serde_json` if that pulls a newer patch. This crate pins `serde_json = "=1.0.134"`.
+
 ## Set the API key
 
 Export `TYPESAFE_API_KEY` before you run the program.
@@ -79,15 +81,17 @@ Build the same program with `cargo build --example system_one`.
 
 Call the helper that matches the question type.
 
-- `response.noul("billing")` for a noul question
-- `response.choice("tone")` for a choice question
-- `response.score("urgency")` for a score question
+- `response.noul("billing")?.noul` is an `f64` yes-probability from 0.0 to 1.0. It is not a `bool`.
+- `response.choice("tone")?.choice` is the selected label `String`.
+- `response.score("urgency")?.score` is an `f64` rubric value, not a legend index.
 
 The answer name must match the question name.
 
 There is no `nouls` or `choices` map. Use `response.noul("name")`.
 
 Scan mixed types through `response.answers`.
+
+Choice descriptions use `Option<JsonContent>`. Write `Some("Calm".into())`, not `Some("Calm")`.
 
 ## Call from blocking code
 
@@ -119,6 +123,9 @@ Work these in order.
 4. Answer names must match question names.
 5. Call `api_key` before `build`. `Client::builder().build()` does not compile.
 6. Enable `features = ["blocking"]` before you import `typesafe_sdk::blocking::Client`.
+7. Do not call `blocking::Client` inside an existing Tokio runtime. It panics.
+8. Treat `noul` as a probability (`f64`), not a boolean.
+9. Pin consumer `serde_json` as `"1"`. A newer exact version fights the crate pin.
 
 ## Read more
 

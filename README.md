@@ -16,7 +16,10 @@ Requires Rust 1.85 or later. Edition 2024.
 [dependencies]
 typesafe-sdk = "0.1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+serde_json = "1"
 ```
+
+Write `serde_json = "1"` by hand. Do not let `cargo add` pick a newer patch that fights this crate's `serde_json = "=1.0.134"` pin.
 
 For scripts that should not be async, enable `blocking`:
 
