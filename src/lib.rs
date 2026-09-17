@@ -23,7 +23,9 @@ pub use answer::{
     Answer, ChoiceAnswer, ListModelsResponse, ModelMetadata, NoulAnswer, ScoreAnswer,
     SystemOneResponse, Usage,
 };
-pub use client::{questions, Client, ClientBuilder, ModelsOpts, SystemOneOpts};
+pub use client::{
+    ApiKeySet, Client, ClientBuilder, ModelsOpts, NoApiKey, SystemOneOpts, questions,
+};
 
 /// Python SDK name. Same type as [`Client`].
 pub type TypeSafeClient = Client;
