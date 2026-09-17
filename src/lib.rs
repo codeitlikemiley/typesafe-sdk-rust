@@ -4,7 +4,7 @@
 //! typed answers. List available models with [`Client::models`].
 //!
 //! Set `TYPESAFE_API_KEY` or pass `api_key` to [`Client::builder`].
-//! Start from `AGENTS.md` and `examples/system_one.rs` when writing a first call.
+//! For a first call, read `AGENTS.md` and copy `examples/system_one.rs`.
 //!
 //! # Example
 //!

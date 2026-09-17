@@ -1,12 +1,12 @@
 # TypeSafe Rust SDK
 
-Rust client for the [TypeSafe AI](https://typesafe.ai) API. It rebuilds the Python `typesafe-sdk` 0.6.0 contract for Rust callers: named questions in, typed answers out.
+Rust client for the [TypeSafe AI](https://typesafe.ai) API. It matches the Python `typesafe-sdk` 0.6.0 contract. Callers send named questions and get typed answers.
 
-Learn what TypeSafe is in the [TypeSafe docs](https://docs.typesafe.ai/).
+Product overview: [TypeSafe docs](https://docs.typesafe.ai/).
 
 ## For AI agents
 
-Read [`AGENTS.md`](AGENTS.md) before writing integration code. Copy from [`examples/system_one.rs`](examples/system_one.rs).
+Read [`AGENTS.md`](AGENTS.md) before you write integration code. Copy from [`examples/system_one.rs`](examples/system_one.rs).
 
 ## Install
 
@@ -19,9 +19,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde_json = "1"
 ```
 
-Write `serde_json = "1"` by hand. Do not let `cargo add` pick a newer patch that fights this crate's `serde_json = "=1.0.134"` pin.
+Write `serde_json = "1"` yourself. Do not let `cargo add` pick a newer patch that conflicts with this crate's `serde_json = "=1.0.134"` pin.
 
-For scripts that should not be async, enable `blocking`:
+For non-async scripts, enable `blocking`:
 
 ```toml
 typesafe-sdk = { version = "0.1", features = ["blocking"] }
@@ -29,7 +29,7 @@ typesafe-sdk = { version = "0.1", features = ["blocking"] }
 
 ## Call System One
 
-Set `TYPESAFE_API_KEY` in your environment, then ask named questions about a piece of state. `TypeSafeClient` is an alias for `Client` if you are coming from the Python package.
+Set `TYPESAFE_API_KEY` in your environment. Ask named questions about a piece of state. `TypeSafeClient` is an alias for `Client` if you are coming from the Python package.
 
 ```rust
 use typesafe_sdk::{Client, Question};
@@ -68,7 +68,7 @@ async fn main() -> Result<(), typesafe_sdk::Error> {
 }
 ```
 
-`state` can be a string, a JSON object, or a JSON array. Questions are noul (yes or no), choice (one label), or score (an ordered rubric). Answers use the same names.
+`state` can be a string, a JSON object, or a JSON array. Questions are noul (yes or no probability), choice (one label), or score (an ordered rubric). Answers use the same names.
 
 List models with `client.models().await?`.
 
@@ -96,15 +96,15 @@ let client = Client::builder()
     .build()?;
 ```
 
-The builder is typestated: `build()` only exists after `api_key(...)`, so a missing key is a compile error. `Client::from_env()` still fails at runtime when `TYPESAFE_API_KEY` is unset or blank.
+The builder is typestated. `build()` exists only after `api_key(...)`, so a missing key is a compile error. `Client::from_env()` still fails at runtime when `TYPESAFE_API_KEY` is unset or blank.
 
 Per-call overrides go on `SystemOneOpts` (`model`, `timeout`, `retry`, `extra_headers`, `extra_body`) or `ModelsOpts` (`timeout`, `retry`, `extra_headers`). `extra_body` is a shallow last-write-wins merge over `state`, `model`, and `questions`.
 
 ## Errors and retries
 
-`Error` is a sum type. HTTP failures are `Error::Api` with a `kind` (`BadRequest`, `Authentication`, `RateLimited`, and the rest). A 200 body that does not match the schema is `ApiErrorKind::ResponseValidation` and names the field path.
+`Error` is a sum type. HTTP failures are `Error::Api` with a `kind` such as `BadRequest`, `Authentication`, or `RateLimited`. A 200 body that does not match the schema is `ApiErrorKind::ResponseValidation` and names the field path.
 
-Default retries: 2 after the first attempt, statuses 408, 429, and 5xx, exponential backoff from 0.5s to 5s with 0.25 jitter, a 30s budget, and honor `Retry-After` / `retry-after-ms`.
+Default retries: 2 after the first attempt. Statuses 408, 429, and 5xx. Exponential backoff from 0.5s to 5s with 0.25 jitter. A 30s budget. Honor `Retry-After` and `retry-after-ms`.
 
 ## Run tests
 
@@ -112,7 +112,7 @@ Default retries: 2 after the first attempt, statuses 408, 429, and 5xx, exponent
 cargo test
 ```
 
-Integration against the live API is not part of `cargo test`. Point `Client::builder().base_url(...)` at a mock, or set `TYPESAFE_API_KEY` and call the real host from your own binary.
+Live API calls are not part of `cargo test`. Point `Client::builder().base_url(...)` at a mock, or set `TYPESAFE_API_KEY` and call the real host from your own binary.
 
 ## Python parity
 
