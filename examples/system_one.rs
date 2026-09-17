@@ -1,13 +1,22 @@
 //! Named System One questions with typed answers.
 //!
-//! Set `TYPESAFE_API_KEY`, then run `cargo run --example system_one`.
+//! Mock: `cargo run --example system_one --features mock`
+//! Live: `TYPESAFE_LIVE=1 cargo run --example system_one`
 
-use typesafe_sdk::{Client, Question};
+#[path = "support/fixtures.rs"]
+mod fixtures;
+#[path = "support/harness.rs"]
+mod harness;
+
+use typesafe_sdk::Question;
 
 #[tokio::main]
 async fn main() -> Result<(), typesafe_sdk::Error> {
-    let client = Client::from_env()?;
-    let response = client
+    let rt = harness::ExampleRuntime::start(fixtures::mixed_primitives()).await?;
+    println!("mode={}", harness::ExampleRuntime::mode_label());
+
+    let response = rt
+        .client
         .system_one(
             serde_json::json!({"document": "I was charged twice. Please fix this ASAP."}),
             [
