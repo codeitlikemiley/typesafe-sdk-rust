@@ -253,7 +253,7 @@ fn validate_raw(name: &str, map: &Map<String, Value>) -> Result<(), Error> {
         _ => {
             return Err(Error::sdk(format!(
                 "Question \"{name}\" must be a question object or a dictionary with a nonempty string \"type\"."
-            )))
+            )));
         }
     };
     if matches!(type_name, "choice" | "score") && !map.contains_key("criteria") {
@@ -266,7 +266,7 @@ fn validate_raw(name: &str, map: &Map<String, Value>) -> Result<(), Error> {
             Some(Value::Array(items)) if items.is_empty() => {
                 return Err(Error::sdk(format!(
                     "Score question \"{name}\" has no criteria; at least one score is required."
-                )))
+                )));
             }
             _ => {}
         }
