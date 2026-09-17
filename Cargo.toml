@@ -8,7 +8,7 @@ description = "Rust SDK for the TypeSafe AI API"
 readme = "README.md"
 keywords = ["typesafe", "sdk", "api", "ai"]
 categories = ["api-bindings", "asynchronous"]
-authors = ["TypeSafe AI"]
+authors = ["Uriah Galang <codeitlikemiley@gmail.com>"]
 
 [features]
 default = []
