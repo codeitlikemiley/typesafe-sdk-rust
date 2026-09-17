@@ -54,11 +54,15 @@ mod tests {
         headers.insert("authorization", HeaderValue::from_static("Bearer secret"));
         headers.insert("accept", HeaderValue::from_static("application/json"));
         let redacted = redact(&headers);
-        assert!(redacted
-            .iter()
-            .any(|(name, value)| name == "authorization" && value == "***"));
-        assert!(redacted
-            .iter()
-            .any(|(name, value)| name == "accept" && value == "application/json"));
+        assert!(
+            redacted
+                .iter()
+                .any(|(name, value)| name == "authorization" && value == "***")
+        );
+        assert!(
+            redacted
+                .iter()
+                .any(|(name, value)| name == "accept" && value == "application/json")
+        );
     }
 }

@@ -5,7 +5,7 @@ use indexmap::IndexMap;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use crate::error::{deserialize_body, validation_error, Error};
+use crate::error::{Error, deserialize_body, validation_error};
 use crate::json::JsonContent;
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -174,7 +174,7 @@ pub(crate) fn decode_system_one(
                 headers,
                 endpoint,
                 "model".to_string(),
-            ))
+            ));
         }
     };
     let usage = object
@@ -210,7 +210,7 @@ pub(crate) fn decode_system_one(
                 headers,
                 endpoint,
                 "answers".to_string(),
-            ))
+            ));
         }
     };
     Ok(SystemOneResponse {
@@ -260,7 +260,7 @@ pub(crate) fn decode_models(
                 headers,
                 endpoint,
                 "models".to_string(),
-            ))
+            ));
         }
     };
     Ok(ListModelsResponse {

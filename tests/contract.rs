@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use typesafe_sdk::{
     ApiErrorKind, Client, JsonContent, NoulCriteria, Question, RetryPolicy, SystemOneOpts,
 };
@@ -108,12 +108,16 @@ async fn system_one_round_trip() {
     );
     assert_eq!(response.score("quality").unwrap().probabilities[&2], 0.8);
     assert!(request_header(&received[0], "x-typesafe-retry-count").is_none());
-    assert!(request_header(&received[0], "user-agent")
-        .unwrap()
-        .starts_with("typesafe-sdk/"));
-    assert!(request_header(&received[0], "x-typesafe-runtime")
-        .unwrap()
-        .starts_with("rust/"));
+    assert!(
+        request_header(&received[0], "user-agent")
+            .unwrap()
+            .starts_with("typesafe-sdk/")
+    );
+    assert!(
+        request_header(&received[0], "x-typesafe-runtime")
+            .unwrap()
+            .starts_with("rust/")
+    );
 }
 
 #[tokio::test]
@@ -407,7 +411,7 @@ async fn noul_criteria_and_rich_json() {
 
 #[test]
 fn missing_api_key() {
-    std::env::remove_var("TYPESAFE_API_KEY");
+    unsafe { std::env::remove_var("TYPESAFE_API_KEY") };
     let error = Client::from_env().unwrap_err();
     assert!(error.to_string().contains("TYPESAFE_API_KEY"));
 }

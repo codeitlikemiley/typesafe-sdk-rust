@@ -6,13 +6,13 @@ use indexmap::IndexMap;
 use reqwest::Client as HttpClient;
 use serde_json::{Map, Value};
 
-use crate::answer::{decode_models, decode_system_one, ListModelsResponse, SystemOneResponse};
+use crate::answer::{ListModelsResponse, SystemOneResponse, decode_models, decode_system_one};
 use crate::config::Config;
 use crate::constants::{API_KEY_ENV, MODELS_PATH, SYSTEM_ONE_PATH};
-use crate::error::{api_error, deserialize_body, format_endpoint, Error};
+use crate::error::{Error, api_error, deserialize_body, format_endpoint};
 use crate::json::IntoState;
-use crate::question::{normalize_questions, Question};
-use crate::request::{merge_extra_body, prepare, set_retry_count, PreparedRequest};
+use crate::question::{Question, normalize_questions};
+use crate::request::{PreparedRequest, merge_extra_body, prepare, set_retry_count};
 use crate::retry::RetryPolicy;
 
 /// Asynchronous TypeSafe client.

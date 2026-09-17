@@ -24,7 +24,7 @@ pub use answer::{
     SystemOneResponse, Usage,
 };
 pub use client::{
-    questions, ApiKeySet, Client, ClientBuilder, ModelsOpts, NoApiKey, SystemOneOpts,
+    ApiKeySet, Client, ClientBuilder, ModelsOpts, NoApiKey, SystemOneOpts, questions,
 };
 
 /// Python SDK name. Same type as [`Client`].
