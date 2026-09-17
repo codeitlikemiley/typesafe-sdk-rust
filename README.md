@@ -124,7 +124,9 @@ cargo test --features mock
 cargo test --features "mock blocking"
 ```
 
-Live API calls are not part of `cargo test`. Cookbook tests use the same wiremock fixtures as the examples. For manual live checks, set `TYPESAFE_LIVE=1` when running an example.
+Live API calls are not part of `cargo test`. Example integration tests in `tests/examples_integration.rs` use the same wiremock fixtures. For manual live checks, set `TYPESAFE_LIVE=1` when running an example.
+
+CI runs `cargo fmt --check`, `cargo check`, `cargo clippy`, tests, and example builds. Run `./scripts/verify.sh` locally for the same matrix.
 
 ## Python parity
 

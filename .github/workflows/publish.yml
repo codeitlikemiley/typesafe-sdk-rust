@@ -47,7 +47,20 @@ jobs:
 
       - name: Check formatting
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.skip_crates_publish != 'true'
-        run: cargo fmt --check
+        run: cargo fmt --all --check
+
+      - name: Cargo check
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.skip_crates_publish != 'true'
+        run: |
+          cargo check --features mock
+          cargo check --features "mock blocking"
+
+      - name: Clippy
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.skip_crates_publish != 'true'
+        run: |
+          rustup component add clippy
+          cargo clippy --features mock -- -D warnings
+          cargo clippy --features "mock blocking" -- -D warnings
 
       - name: Test
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.skip_crates_publish != 'true'
@@ -56,6 +69,12 @@ jobs:
       - name: Test with blocking feature
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.skip_crates_publish != 'true'
         run: cargo test --features "mock blocking"
+
+      - name: Build examples
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.skip_crates_publish != 'true'
+        run: |
+          cargo build --examples --features mock
+          cargo build --example blocking_triage --features "mock blocking"
 
       - name: Check documentation
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.skip_crates_publish != 'true'

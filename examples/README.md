@@ -11,7 +11,7 @@ Runnable Rust ports of patterns and cookbooks from [docs.typesafe.ai](https://do
 
 Mock mode starts an in-process [wiremock](https://crates.io/crates/wiremock) server with canned JSON from `examples/support/fixtures.rs`. Live mode calls `https://api.typesafe.ai` with your credentials.
 
-CI runs the same fixtures in `tests/cookbooks.rs` via `cargo test --features mock`.
+CI runs the same fixtures in `tests/examples_integration.rs` via `cargo test --features mock`.
 
 ## Examples
 
