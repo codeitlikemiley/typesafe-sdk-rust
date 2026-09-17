@@ -6,9 +6,11 @@ rust-version = "1.85"
 license = "MIT"
 description = "Rust SDK for the TypeSafe AI API"
 readme = "README.md"
+repository = "https://github.com/codeitlikemiley/typesafe-sdk-rust"
 keywords = ["typesafe", "sdk", "api", "ai"]
 categories = ["api-bindings", "asynchronous"]
 authors = ["Uriah Galang <codeitlikemiley@gmail.com>"]
+exclude = [".github/"]
 
 [features]
 default = []
