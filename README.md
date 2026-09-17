@@ -4,6 +4,10 @@ Rust client for the [TypeSafe AI](https://typesafe.ai) API. It rebuilds the Pyth
 
 Learn what TypeSafe is in the [TypeSafe docs](https://docs.typesafe.ai/).
 
+## For AI agents
+
+Read [`AGENTS.md`](AGENTS.md) before writing integration code. Copy from [`examples/system_one.rs`](examples/system_one.rs).
+
 ## Install
 
 Requires Rust 1.85 or later. Edition 2024.

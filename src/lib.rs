@@ -4,6 +4,44 @@
 //! typed answers. List available models with [`Client::models`].
 //!
 //! Set `TYPESAFE_API_KEY` or pass `api_key` to [`Client::builder`].
+//! Start from `AGENTS.md` and `examples/system_one.rs` when writing a first call.
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use typesafe_sdk::{Client, Question};
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), typesafe_sdk::Error> {
+//!     let client = Client::from_env()?;
+//!     let response = client
+//!         .system_one(
+//!             serde_json::json!({"document": "I was charged twice. Please fix this ASAP."}),
+//!             [
+//!                 ("billing", Question::noul("Is this ticket about billing?")),
+//!                 (
+//!                     "tone",
+//!                     Question::choice(
+//!                         "What is the customer's tone?",
+//!                         [("calm", None), ("frustrated", None), ("angry", None)],
+//!                     ),
+//!                 ),
+//!                 (
+//!                     "urgency",
+//!                     Question::score(
+//!                         "How urgent is this ticket?",
+//!                         ["can wait", "this week", "today"],
+//!                     ),
+//!                 ),
+//!             ],
+//!         )
+//!         .await?;
+//!     println!("{}", response.noul("billing")?.noul);
+//!     println!("{}", response.choice("tone")?.choice);
+//!     println!("{}", response.score("urgency")?.score);
+//!     Ok(())
+//! }
+//! ```
 
 mod answer;
 mod client;
