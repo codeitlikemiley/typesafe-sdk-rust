@@ -4,6 +4,10 @@ on:
   push:
     tags:
       - "v*"
+    # Agent / API workaround when git tag push is unavailable:
+    # create branch tags/vX.Y.Z to trigger the same publish path.
+    branches:
+      - "tags/v*"
 
 permissions:
   contents: read
@@ -19,7 +23,9 @@ jobs:
       - name: Check tag matches package version
         run: |
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
-          test "v$version" = "$GITHUB_REF_NAME"
+          # GITHUB_REF_NAME is v0.1.0 for tags, or tags/v0.1.0 for the branch workaround
+          ref="${GITHUB_REF_NAME#tags/}"
+          test "v$version" = "$ref"
 
       - name: Check formatting
         run: cargo fmt --check
