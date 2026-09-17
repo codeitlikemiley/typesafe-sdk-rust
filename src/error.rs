@@ -9,9 +9,19 @@ use crate::constants::MAX_ERROR_BODY_LENGTH;
 /// A client, transport, or API failure.
 #[derive(Debug)]
 pub enum Error {
+    /// Client-side misuse such as a bad argument or missing key. Never retried.
     Sdk(String),
-    Connection { message: String },
-    Timeout { timeout: Duration },
+    /// Transport failure sending the request or reading the response.
+    Connection {
+        /// Transport error message without the request URL.
+        message: String,
+    },
+    /// Per-attempt timeout elapsed before the response completed.
+    Timeout {
+        /// Timeout applied to the failed attempt.
+        timeout: Duration,
+    },
+    /// HTTP error response, or a 2xx body that failed to decode.
     Api(Box<ApiError>),
 }
 
@@ -20,6 +30,7 @@ impl Error {
         Self::Sdk(message.into())
     }
 
+    /// Returns the inner `ApiError` when the error is `Error::Api`, else `None`.
     pub fn api(&self) -> Option<&ApiError> {
         match self {
             Self::Api(error) => Some(error),
@@ -50,21 +61,30 @@ impl std::error::Error for Error {}
 /// An unsuccessful HTTP response, or a successful response that failed to decode.
 #[derive(Debug, Clone)]
 pub struct ApiError {
+    /// HTTP status code of the response.
     pub status: u16,
+    /// Classified kind derived from `status`.
     pub kind: ApiErrorKind,
+    /// Parsed error body. `None` when the response had no body.
     pub body: Option<ErrorBody>,
+    /// Response headers.
     pub headers: HeaderMap,
+    /// `"METHOD url"` of the failed request without query or userinfo. `None` when unknown.
     pub endpoint: Option<String>,
+    /// Schema path such as `answers.q.score` when `kind` is `ResponseValidation`, else `None`.
     pub field_path: Option<String>,
+    /// Server-requested wait parsed from `retry-after-ms` or `retry-after`. `None` when absent.
     pub retry_after: Option<Duration>,
     message: String,
 }
 
 impl ApiError {
+    /// Returns the `x-typesafe-request-id` response header, when present.
     pub fn request_id(&self) -> Option<&str> {
         header_str(&self.headers, crate::constants::REQUEST_ID_HEADER)
     }
 
+    /// Returns `retry_after` in milliseconds. `None` when the server sent no wait.
     pub fn retry_after_ms(&self) -> Option<f64> {
         self.retry_after.map(|delay| delay.as_secs_f64() * 1000.0)
     }
@@ -90,19 +110,30 @@ impl fmt::Display for ApiError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Classification of an `ApiError` by HTTP status or decode failure.
 pub enum ApiErrorKind {
+    /// Fires on status 400.
     BadRequest,
+    /// Fires on status 401.
     Authentication,
+    /// Fires on status 403.
     PermissionDenied,
+    /// Fires on status 404.
     NotFound,
+    /// Fires on status 422.
     UnprocessableEntity,
+    /// Fires on status 429.
     RateLimited,
+    /// Fires on statuses 500-599.
     Internal,
+    /// Fires when a 2xx body does not match the response schema.
     ResponseValidation,
+    /// Fires on any other status.
     Other,
 }
 
 impl ApiErrorKind {
+    /// Maps an HTTP status code to its `ApiErrorKind`.
     pub fn from_status(status: u16) -> Self {
         match status {
             400 => Self::BadRequest,
@@ -118,8 +149,11 @@ impl ApiErrorKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Parsed error response body.
 pub enum ErrorBody {
+    /// Body parsed as JSON.
     Json(Value),
+    /// Body kept as text when it is not JSON.
     Text(String),
 }
 
