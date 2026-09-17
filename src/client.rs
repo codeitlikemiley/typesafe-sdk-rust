@@ -24,12 +24,15 @@ pub struct Client {
 }
 
 #[derive(Clone, Debug)]
+/// Builder state meaning no API key has been supplied yet.
 pub struct NoApiKey;
 
 #[derive(Clone, Debug)]
+/// Builder state meaning an API key has been supplied.
 pub struct ApiKeySet;
 
 #[derive(Clone, Debug)]
+/// Typestate builder for `Client`. Starts as `ClientBuilder<NoApiKey>`, `api_key()` moves it to `ClientBuilder<ApiKeySet>`, and `build()` exists only on the keyed state.
 pub struct ClientBuilder<S> {
     api_key: Option<String>,
     model: Option<String>,
@@ -42,6 +45,7 @@ pub struct ClientBuilder<S> {
 }
 
 impl ClientBuilder<NoApiKey> {
+    /// Sets the API key and moves the builder to `ClientBuilder<ApiKeySet>`.
     pub fn api_key(self, api_key: impl Into<String>) -> ClientBuilder<ApiKeySet> {
         ClientBuilder {
             api_key: Some(api_key.into()),
@@ -57,11 +61,13 @@ impl ClientBuilder<NoApiKey> {
 }
 
 impl ClientBuilder<ApiKeySet> {
+    /// Replaces the API key on an already keyed builder.
     pub fn api_key(mut self, api_key: impl Into<String>) -> Self {
         self.api_key = Some(api_key.into());
         self
     }
 
+    /// Validates the builder and returns a `Client`. Reads defaults from the environment for unset fields.
     pub fn build(self) -> Result<Client, Error> {
         crate::logging::setup();
         if let Some(retry) = &self.retry {
@@ -96,21 +102,25 @@ impl ClientBuilder<ApiKeySet> {
 }
 
 impl<S> ClientBuilder<S> {
+    /// Sets the default model, overriding `TYPESAFE_DEFAULT_MODEL` and `jev-latest`.
     pub fn model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
         self
     }
 
+    /// Sets the retry policy, overriding `RetryPolicy::default()`.
     pub fn retry(mut self, retry: RetryPolicy) -> Self {
         self.retry = Some(retry);
         self
     }
 
+    /// Sets the per-attempt timeout, overriding the 10 second default.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self
     }
 
+    /// Adds one default header sent with every request. Errors on an invalid name or value.
     pub fn header(mut self, name: impl AsRef<str>, value: impl AsRef<str>) -> Result<Self, Error> {
         let name = http::HeaderName::from_bytes(name.as_ref().as_bytes())
             .map_err(|_| Error::sdk("invalid header name"))?;
@@ -120,16 +130,19 @@ impl<S> ClientBuilder<S> {
         Ok(self)
     }
 
+    /// Replaces the full set of default headers sent with every request.
     pub fn headers(mut self, headers: HeaderMap) -> Self {
         self.headers = headers;
         self
     }
 
+    /// Sets the base URL, overriding `TYPESAFE_BASE_URL` and `https://api.typesafe.ai`.
     pub fn base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = Some(base_url.into());
         self
     }
 
+    /// Uses the given `reqwest` client instead of building one from the timeout.
     pub fn http_client(mut self, http: HttpClient) -> Self {
         self.http = Some(http);
         self
@@ -152,10 +165,12 @@ impl Default for ClientBuilder<NoApiKey> {
 }
 
 impl Client {
+    /// Returns a `ClientBuilder<NoApiKey>`. Call `api_key()` before `build()`.
     pub fn builder() -> ClientBuilder<NoApiKey> {
         ClientBuilder::default()
     }
 
+    /// Builds a `Client` from the environment. Errors when `TYPESAFE_API_KEY` is unset or blank.
     pub fn from_env() -> Result<Self, Error> {
         let api_key = crate::config::resolve_env(None, API_KEY_ENV, None).ok_or_else(|| {
             Error::sdk(format!(
@@ -165,10 +180,12 @@ impl Client {
         Self::builder().api_key(api_key).build()
     }
 
+    /// Builds a `Client` with the given API key and default model, timeout, and retry policy.
     pub fn new(api_key: impl Into<String>) -> Result<Self, Error> {
         Self::builder().api_key(api_key).build()
     }
 
+    /// Sends `state` and `questions` to `POST /v1/systemone` with client defaults. Returns decoded answers.
     pub async fn system_one<S, I, K>(
         &self,
         state: S,
@@ -183,6 +200,7 @@ impl Client {
             .await
     }
 
+    /// Sends `state` and `questions` to `POST /v1/systemone` with per-call `SystemOneOpts`. Returns decoded answers.
     pub async fn system_one_opts<S, I, K>(
         &self,
         state: S,
@@ -226,10 +244,12 @@ impl Client {
         decode_system_one(status, headers, Some(endpoint), bytes)
     }
 
+    /// Lists models from `GET /v1/models` with client defaults. Returns decoded model entries.
     pub async fn models(&self) -> Result<ListModelsResponse, Error> {
         self.models_opts(ModelsOpts::default()).await
     }
 
+    /// Lists models from `GET /v1/models` with per-call `ModelsOpts`. Returns decoded model entries.
     pub async fn models_opts(&self, opts: ModelsOpts) -> Result<ListModelsResponse, Error> {
         let request = prepare(
             &self.config,
@@ -365,18 +385,28 @@ fn fastrand_jitter() -> f64 {
 }
 
 #[derive(Clone, Debug, Default)]
+/// Per-call overrides for `system_one_opts`.
 pub struct SystemOneOpts {
+    /// Overrides the client default model. `None` keeps the client model.
     pub model: Option<String>,
+    /// Overrides the client retry policy. `None` keeps the client policy.
     pub retry: Option<RetryPolicy>,
+    /// Overrides the client per-attempt timeout. `None` keeps the client timeout.
     pub timeout: Option<Duration>,
+    /// Extra headers merged over the client headers for one call.
     pub extra_headers: HeaderMap,
+    /// Extra body keys shallow-merged over `state`, `model`, and `questions`. Last write wins.
     pub extra_body: Option<Map<String, Value>>,
 }
 
 #[derive(Clone, Debug, Default)]
+/// Per-call overrides for `models_opts`.
 pub struct ModelsOpts {
+    /// Overrides the client retry policy. `None` keeps the client policy.
     pub retry: Option<RetryPolicy>,
+    /// Overrides the client per-attempt timeout. `None` keeps the client timeout.
     pub timeout: Option<Duration>,
+    /// Extra headers merged over the client headers for one call.
     pub extra_headers: HeaderMap,
 }
 

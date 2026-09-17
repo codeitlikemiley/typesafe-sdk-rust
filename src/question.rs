@@ -9,21 +9,26 @@ use crate::json::JsonContent;
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct NoulCriteria {
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Meaning of a yes answer. Omitted from the wire when `None`.
     pub true_meaning: Option<JsonContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Meaning of a no answer. Omitted from the wire when `None`.
     pub false_meaning: Option<JsonContent>,
 }
 
 impl NoulCriteria {
+    /// Returns empty criteria with neither meaning set.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Sets the meaning of a yes answer.
     pub fn yes(mut self, value: impl Into<JsonContent>) -> Self {
         self.true_meaning = Some(value.into());
         self
     }
 
+    /// Sets the meaning of a no answer.
     pub fn no(mut self, value: impl Into<JsonContent>) -> Self {
         self.false_meaning = Some(value.into());
         self
@@ -44,22 +49,33 @@ impl NoulCriteria {
 /// A named question sent to System One.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Question {
+    /// Yes/no question. `instructions` asks the question, `criteria` optionally defines yes/no meanings.
     Noul {
+        /// Question text. `None` sends a bare noul with no instructions.
         instructions: Option<JsonContent>,
+        /// Optional yes/no meanings. `None` omits criteria from the wire.
         criteria: Option<NoulCriteria>,
     },
+    /// One-label question. `criteria` maps each label to an optional description.
     Choice {
+        /// Question text.
         instructions: Option<JsonContent>,
+        /// Map from label to its description. `None` sends a null description.
         criteria: IndexMap<String, Option<JsonContent>>,
     },
+    /// Ordered-rubric question. `criteria` holds the rubric entries in score order.
     Score {
+        /// Question text.
         instructions: Option<JsonContent>,
+        /// Rubric entries in score order. Must be nonempty.
         criteria: Vec<JsonContent>,
     },
+    /// Pass-through question map sent as-is after `type` validation.
     Raw(Map<String, Value>),
 }
 
 impl Question {
+    /// Builds a noul question with instructions and no criteria.
     pub fn noul(instructions: impl Into<JsonContent>) -> Self {
         Self::Noul {
             instructions: Some(instructions.into()),
@@ -67,6 +83,7 @@ impl Question {
         }
     }
 
+    /// Builds a noul question with no instructions and no criteria.
     pub fn noul_bare() -> Self {
         Self::Noul {
             instructions: None,
@@ -74,6 +91,7 @@ impl Question {
         }
     }
 
+    /// Attaches `criteria` to a noul question. Returns other variants unchanged.
     pub fn with_noul_criteria(self, criteria: NoulCriteria) -> Self {
         match self {
             Self::Noul { instructions, .. } => Self::Noul {
@@ -84,6 +102,7 @@ impl Question {
         }
     }
 
+    /// Builds a choice question with instructions and label-to-description criteria.
     pub fn choice(
         instructions: impl Into<JsonContent>,
         criteria: impl IntoIterator<Item = (impl Into<String>, Option<JsonContent>)>,
@@ -97,6 +116,7 @@ impl Question {
         }
     }
 
+    /// Builds a score question with instructions and ordered rubric criteria. Errors at send time when empty.
     pub fn score(
         instructions: impl Into<JsonContent>,
         criteria: impl IntoIterator<Item = impl Into<JsonContent>>,
@@ -107,10 +127,12 @@ impl Question {
         }
     }
 
+    /// Builds a pass-through question from a raw map. Validated at send time.
     pub fn raw(value: Map<String, Value>) -> Self {
         Self::Raw(value)
     }
 
+    /// Wraps a JSON object value as a raw question. Errors on non-object values.
     pub fn from_value(value: Value) -> Result<Self, Error> {
         match value {
             Value::Object(map) => Ok(Self::Raw(map)),

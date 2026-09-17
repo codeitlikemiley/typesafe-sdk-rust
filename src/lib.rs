@@ -17,6 +17,7 @@ mod request;
 mod retry;
 
 #[cfg(feature = "blocking")]
+/// Blocking client built on a current-thread Tokio runtime.
 pub mod blocking;
 
 pub use answer::{
@@ -38,4 +39,5 @@ pub use json::{IntoState, JsonContent};
 pub use question::{NoulCriteria, Question};
 pub use retry::{RetryPolicy, RetryStatuses};
 
+/// Crate version from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

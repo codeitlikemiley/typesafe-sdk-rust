@@ -9,33 +9,49 @@ use crate::error::{Error, deserialize_body, validation_error};
 use crate::json::JsonContent;
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
+/// Yes/no answer with a calibrated probability.
 pub struct NoulAnswer {
+    /// Probability from 0.0 to 1.0 that the answer is yes.
     pub noul: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
+/// Selected label with per-label probabilities.
 pub struct ChoiceAnswer {
+    /// Selected criteria label.
     pub choice: String,
+    /// Probability from 0.0 to 1.0 assigned to `choice`.
     pub confidence: f64,
+    /// Map from each criteria label to its probability from 0.0 to 1.0.
     pub probabilities: IndexMap<String, f64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
+/// Score answer with rubric legend and per-score probabilities.
 pub struct ScoreAnswer {
+    /// Selected score. Follows the order of the question criteria.
     pub score: f64,
+    /// Probability from 0.0 to 1.0 assigned to `score`.
     pub confidence: f64,
+    /// Map from score index to its rubric text.
     pub legend: BTreeMap<u32, JsonContent>,
+    /// Map from score index to its probability from 0.0 to 1.0.
     pub probabilities: BTreeMap<u32, f64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
+/// Typed answer for one named question.
 pub enum Answer {
+    /// Yes/no answer. Holds a `NoulAnswer`.
     Noul(NoulAnswer),
+    /// Single-label answer. Holds a `ChoiceAnswer`.
     Choice(ChoiceAnswer),
+    /// Rubric score answer. Holds a `ScoreAnswer`.
     Score(ScoreAnswer),
 }
 
 impl Answer {
+    /// Returns the inner `NoulAnswer` when the answer is `Answer::Noul`, else `None`.
     pub fn as_noul(&self) -> Option<&NoulAnswer> {
         match self {
             Self::Noul(answer) => Some(answer),
@@ -43,6 +59,7 @@ impl Answer {
         }
     }
 
+    /// Returns the inner `ChoiceAnswer` when the answer is `Answer::Choice`, else `None`.
     pub fn as_choice(&self) -> Option<&ChoiceAnswer> {
         match self {
             Self::Choice(answer) => Some(answer),
@@ -50,6 +67,7 @@ impl Answer {
         }
     }
 
+    /// Returns the inner `ScoreAnswer` when the answer is `Answer::Score`, else `None`.
     pub fn as_score(&self) -> Option<&ScoreAnswer> {
         match self {
             Self::Score(answer) => Some(answer),
@@ -59,8 +77,11 @@ impl Answer {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
+/// Token counts reported with a System One response.
 pub struct Usage {
+    /// Input tokens used. `None` when the server omits the count.
     pub input_tokens: Option<i64>,
+    /// Output tokens used. `None` when the server omits the count.
     pub output_tokens: Option<i64>,
 }
 
@@ -74,51 +95,66 @@ impl Default for Usage {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
+/// One model entry from the models endpoint.
 pub struct ModelMetadata {
+    /// Model name passed as `model` to System One.
     pub name: String,
+    /// Human-readable model description.
     pub description: String,
+    /// Model release date as reported by the server.
     pub release_date: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
+/// Models endpoint response with decoded entries.
 pub struct ListModelsResponse {
+    /// Decoded model entries.
     pub models: Vec<ModelMetadata>,
     request_id: Option<String>,
     raw_body: bytes::Bytes,
 }
 
 impl ListModelsResponse {
+    /// Returns the `x-typesafe-request-id` response header. Errors when the header is absent.
     pub fn request_id(&self) -> Result<&str, Error> {
         self.request_id
             .as_deref()
             .ok_or_else(|| Error::sdk("The response did not include a request ID."))
     }
 
+    /// Returns the raw response body bytes exactly as received.
     pub fn raw_body(&self) -> &[u8] {
         &self.raw_body
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
+/// System One response with decoded answers keyed by question name.
 pub struct SystemOneResponse {
+    /// Name of the model that produced the answers.
     pub model: String,
+    /// Token counts for the call.
     pub usage: Usage,
+    /// Decoded answers keyed by question name.
     pub answers: IndexMap<String, Answer>,
     request_id: Option<String>,
     raw_body: bytes::Bytes,
 }
 
 impl SystemOneResponse {
+    /// Returns the `x-typesafe-request-id` response header. Errors when the header is absent.
     pub fn request_id(&self) -> Result<&str, Error> {
         self.request_id
             .as_deref()
             .ok_or_else(|| Error::sdk("The response did not include a request ID."))
     }
 
+    /// Returns the raw response body bytes exactly as received.
     pub fn raw_body(&self) -> &[u8] {
         &self.raw_body
     }
 
+    /// Returns the noul answer called `name`. Errors when the name or type does not match.
     pub fn noul(&self, name: &str) -> Result<&NoulAnswer, Error> {
         self.answers
             .get(name)
@@ -126,6 +162,7 @@ impl SystemOneResponse {
             .ok_or_else(|| Error::sdk(format!("No noul answer named \"{name}\".")))
     }
 
+    /// Returns the choice answer called `name`. Errors when the name or type does not match.
     pub fn choice(&self, name: &str) -> Result<&ChoiceAnswer, Error> {
         self.answers
             .get(name)
@@ -133,6 +170,7 @@ impl SystemOneResponse {
             .ok_or_else(|| Error::sdk(format!("No choice answer named \"{name}\".")))
     }
 
+    /// Returns the score answer called `name`. Errors when the name or type does not match.
     pub fn score(&self, name: &str) -> Result<&ScoreAnswer, Error> {
         self.answers
             .get(name)

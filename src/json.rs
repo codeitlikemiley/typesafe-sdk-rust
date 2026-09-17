@@ -7,12 +7,16 @@ use crate::error::Error;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum JsonContent {
+    /// Plain text content.
     String(String),
+    /// JSON array content.
     Array(Vec<Value>),
+    /// JSON object content.
     Object(serde_json::Map<String, Value>),
 }
 
 impl JsonContent {
+    /// Converts a `Value` to `JsonContent`. Errors on null, boolean, and number values.
     pub fn from_value(value: Value) -> Result<Self, Error> {
         match value {
             Value::Null => Err(Error::sdk("state must be a string, object, or array")),
@@ -53,6 +57,7 @@ impl From<Vec<Value>> for JsonContent {
 
 /// Accepts a string, object, array, or [`JsonContent`].
 pub trait IntoState {
+    /// Converts the value into `JsonContent` for the System One `state` field.
     fn into_state(self) -> Result<JsonContent, Error>;
 }
 
