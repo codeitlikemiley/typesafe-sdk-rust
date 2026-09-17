@@ -4,8 +4,6 @@ on:
   push:
     tags:
       - "v*"
-    # Agent / API workaround when git tag push is unavailable:
-    # create branch tags/vX.Y.Z to trigger the same publish path.
     branches:
       - "tags/v*"
   workflow_dispatch:
@@ -27,9 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
-
       - name: Resolve release tag
         id: release
         run: |
@@ -44,29 +40,23 @@ jobs:
           test "v${version}" = "${tag}"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-
       - name: Check formatting
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.skip_crates_publish != 'true'
         run: cargo fmt --check
-
       - name: Test
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.skip_crates_publish != 'true'
-        run: cargo test
-
+        run: cargo test --features mock
       - name: Test with blocking feature
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.skip_crates_publish != 'true'
-        run: cargo test --features blocking
-
+        run: cargo test --features "mock blocking"
       - name: Check documentation
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.skip_crates_publish != 'true'
         run: RUSTDOCFLAGS='-D missing-docs' cargo doc --no-deps --all-features
-
       - name: Publish to crates.io
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.skip_crates_publish != 'true'
         run: cargo publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -76,10 +66,8 @@ jobs:
           generate_release_notes: true
           body: |
             ## Install
-
             ```toml
             typesafe-sdk = "${{ steps.release.outputs.version }}"
             ```
-
             - [crates.io](https://crates.io/crates/typesafe-sdk/${{ steps.release.outputs.version }})
             - [docs.rs](https://docs.rs/typesafe-sdk/${{ steps.release.outputs.version }})
