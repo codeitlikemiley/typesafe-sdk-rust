@@ -59,8 +59,8 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.skip_crates_publish != 'true'
         run: |
           rustup component add clippy
-          cargo clippy --features mock -- -D warnings
-          cargo clippy --features "mock blocking" -- -D warnings
+          cargo clippy --all-targets --features mock -- -D warnings
+          cargo clippy --all-targets --features "mock blocking" -- -D warnings
 
       - name: Test
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.skip_crates_publish != 'true'

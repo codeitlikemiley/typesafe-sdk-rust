@@ -34,8 +34,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - run: cargo clippy --features mock -- -D warnings
-      - run: cargo clippy --features "mock blocking" -- -D warnings
+      - run: cargo clippy --all-targets --features mock -- -D warnings
+      - run: cargo clippy --all-targets --features "mock blocking" -- -D warnings
 
   test:
     name: test

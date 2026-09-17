@@ -30,7 +30,7 @@ fn is_live() -> bool {
         .unwrap_or(false)
 }
 
-const QUESTIONS: [(&str, fn() -> Question); 1] = [("category", || {
+fn category_question() -> Question {
     Question::choice(
         "Category?",
         [
@@ -39,7 +39,7 @@ const QUESTIONS: [(&str, fn() -> Question); 1] = [("category", || {
             ("feature_request", None),
         ],
     )
-})];
+}
 
 fn print_category(response: &typesafe_sdk::SystemOneResponse) -> Result<(), typesafe_sdk::Error> {
     println!("category={}", response.choice("category")?.choice);
@@ -52,7 +52,7 @@ fn run_live() -> Result<(), typesafe_sdk::Error> {
     let client = BlockingClient::from_env()?;
     let response = client.system_one(
         "Billing double-charged my card.",
-        QUESTIONS.map(|(name, build)| (name, build())),
+        [("category", category_question())],
     )?;
     print_category(&response)
 }
@@ -75,7 +75,7 @@ async fn run_mock() -> Result<(), typesafe_sdk::Error> {
     let response = client
         .system_one(
             "Billing double-charged my card.",
-            QUESTIONS.map(|(name, build)| (name, build())),
+            [("category", category_question())],
         )
         .await?;
     print_category(&response)
