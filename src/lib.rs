@@ -4,6 +4,27 @@
 //! typed answers. List available models with [`Client::models`].
 //!
 //! Set `TYPESAFE_API_KEY` or pass `api_key` to [`Client::builder`].
+//! AI coding agents should start with the repo `AGENTS.md` and
+//! `examples/system_one.rs`.
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use typesafe_sdk::{Client, Question};
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), typesafe_sdk::Error> {
+//!     let client = Client::from_env()?;
+//!     let response = client
+//!         .system_one(
+//!             "I was charged twice.",
+//!             [("billing", Question::noul("Is this about billing?"))],
+//!         )
+//!         .await?;
+//!     println!("{}", response.noul("billing")?.noul);
+//!     Ok(())
+//! }
+//! ```
 
 mod answer;
 mod client;
