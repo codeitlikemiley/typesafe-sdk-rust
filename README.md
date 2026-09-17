@@ -6,6 +6,8 @@ Learn what TypeSafe is in the [TypeSafe docs](https://docs.typesafe.ai/).
 
 ## Install
 
+Requires Rust 1.85 or later. Edition 2024.
+
 ```toml
 [dependencies]
 typesafe-sdk = "0.1"
@@ -73,7 +75,7 @@ Constructor values win over environment variables. Whitespace-only environment v
 | Base URL | `TYPESAFE_BASE_URL` | `https://api.typesafe.ai` |
 | Model | `TYPESAFE_DEFAULT_MODEL` | `jev-latest` |
 | Timeout | - | 10 seconds per attempt |
-| Log level | `TYPESAFE_LOG_LEVEL` | unset. Values are `debug`, `info`, `warn`, `error`, `off`. Secret headers are redacted. |
+| Log level | `TYPESAFE_LOG_LEVEL` | unset. Values are `debug`, `info`, `warn`, `warning`, `error`, `off`. Secret headers are redacted. |
 
 ```rust
 use std::time::Duration;
@@ -87,9 +89,9 @@ let client = Client::builder()
     .build()?;
 ```
 
-The builder is typestated: `build()` only exists after `api_key(...)`, so a missing key is a compile error. `Client::from_env()` still fails at runtime when `TYPESAFE_API_KEY` is unset.
+The builder is typestated: `build()` only exists after `api_key(...)`, so a missing key is a compile error. `Client::from_env()` still fails at runtime when `TYPESAFE_API_KEY` is unset or blank.
 
-Per-call overrides go on `SystemOneOpts` or `ModelsOpts`: `model`, `timeout`, `retry`, `extra_headers`, and `extra_body`. `extra_body` is a shallow last-write-wins merge over `state`, `model`, and `questions`.
+Per-call overrides go on `SystemOneOpts` (`model`, `timeout`, `retry`, `extra_headers`, `extra_body`) or `ModelsOpts` (`timeout`, `retry`, `extra_headers`). `extra_body` is a shallow last-write-wins merge over `state`, `model`, and `questions`.
 
 ## Errors and retries
 
