@@ -5,7 +5,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 pub struct MockRuntime {
     pub client: Client,
-    _server: MockServer,
+    pub server: MockServer,
 }
 
 pub async fn mock_client(body: Value) -> MockRuntime {
@@ -23,8 +23,5 @@ pub async fn mock_client(body: Value) -> MockRuntime {
         .retry(RetryPolicy::disabled())
         .build()
         .expect("client");
-    MockRuntime {
-        client,
-        _server: server,
-    }
+    MockRuntime { client, server }
 }
