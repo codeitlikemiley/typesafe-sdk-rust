@@ -9,11 +9,14 @@ use crate::error::Error;
 /// `Custom` is an exact set, including the empty set (retry no HTTP status).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RetryStatuses {
+    /// 408, 429, and 500-599 matched as a predicate, not a stored table.
     Default,
+    /// Exact status set to retry, including empty for no HTTP status.
     Custom(HashSet<u16>),
 }
 
 impl RetryStatuses {
+    /// Returns true when `status` triggers a retry under this policy.
     pub fn contains(&self, status: u16) -> bool {
         match self {
             Self::Default => matches!(status, 408 | 429 | 500..=599),
@@ -25,14 +28,23 @@ impl RetryStatuses {
 /// Retry behavior for one client or one call. Numbers match the Python SDK defaults.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RetryPolicy {
+    /// Retries after the first attempt. Default 2.
     pub max_retries: u32,
+    /// First backoff delay. Default 500ms.
     pub backoff_initial: Duration,
+    /// Backoff cap per wait. Default 5s.
     pub backoff_max: Duration,
+    /// Jitter fraction from 0.0 to 1.0. Default 0.25.
     pub backoff_jitter: f64,
+    /// Statuses that trigger a retry. Default `RetryStatuses::Default`.
     pub http_statuses: RetryStatuses,
+    /// Honor `retry-after-ms` and `retry-after` over computed backoff. Default true.
     pub respect_retry_after: bool,
+    /// Retry connection errors. Default true.
     pub api_connection_error: bool,
+    /// Retry timeout errors. Default true.
     pub api_timeout_error: bool,
+    /// Total retry budget. Default 30s. `None` disables the budget.
     pub timeout: Option<Duration>,
 }
 
@@ -53,6 +65,7 @@ impl Default for RetryPolicy {
 }
 
 impl RetryPolicy {
+    /// Returns a policy with `max_retries` 0 and no timeout budget.
     pub fn disabled() -> Self {
         Self {
             max_retries: 0,
@@ -61,6 +74,7 @@ impl RetryPolicy {
         }
     }
 
+    /// Checks that `backoff_jitter` is 0.0-1.0 and `timeout` is positive. Errors otherwise.
     pub fn validate(&self) -> Result<(), Error> {
         if self.backoff_jitter.is_nan() || !(0.0..=1.0).contains(&self.backoff_jitter) {
             return Err(Error::sdk("backoff_jitter must be between zero and one."));
