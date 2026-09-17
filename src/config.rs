@@ -3,8 +3,7 @@ use std::time::Duration;
 use http::HeaderMap;
 
 use crate::constants::{
-    API_KEY_ENV, BASE_URL_ENV, DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_MODEL_ENV,
-    DEFAULT_TIMEOUT_SECS,
+    BASE_URL_ENV, DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_MODEL_ENV, DEFAULT_TIMEOUT_SECS,
 };
 use crate::error::Error;
 
@@ -19,17 +18,12 @@ pub(crate) struct Config {
 
 impl Config {
     pub fn resolve(
-        api_key: Option<String>,
+        api_key: String,
         base_url: Option<String>,
         default_model: Option<String>,
         timeout: Option<Duration>,
         default_headers: HeaderMap,
     ) -> Result<Self, Error> {
-        let api_key = resolve_env(api_key, API_KEY_ENV, None).ok_or_else(|| {
-            Error::sdk(format!(
-                "No API key was provided. Pass api_key or set the {API_KEY_ENV} environment variable."
-            ))
-        })?;
         let base_url = resolve_env(base_url, BASE_URL_ENV, Some(DEFAULT_BASE_URL.to_string()))
             .expect("default base URL is present")
             .trim_end_matches('/')

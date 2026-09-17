@@ -408,7 +408,7 @@ async fn noul_criteria_and_rich_json() {
 #[test]
 fn missing_api_key() {
     std::env::remove_var("TYPESAFE_API_KEY");
-    let error = Client::builder().build().unwrap_err();
+    let error = Client::from_env().unwrap_err();
     assert!(error.to_string().contains("TYPESAFE_API_KEY"));
 }
 

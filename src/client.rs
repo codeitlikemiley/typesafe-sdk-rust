@@ -1,3 +1,4 @@
+use std::marker::PhantomData;
 use std::time::{Duration, Instant};
 
 use http::HeaderMap;
@@ -7,7 +8,7 @@ use serde_json::{Map, Value};
 
 use crate::answer::{decode_models, decode_system_one, ListModelsResponse, SystemOneResponse};
 use crate::config::Config;
-use crate::constants::{MODELS_PATH, SYSTEM_ONE_PATH};
+use crate::constants::{API_KEY_ENV, MODELS_PATH, SYSTEM_ONE_PATH};
 use crate::error::{api_error, deserialize_body, format_endpoint, Error};
 use crate::json::IntoState;
 use crate::question::{normalize_questions, Question};
@@ -22,8 +23,14 @@ pub struct Client {
     retry: RetryPolicy,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct ClientBuilder {
+#[derive(Clone, Debug)]
+pub struct NoApiKey;
+
+#[derive(Clone, Debug)]
+pub struct ApiKeySet;
+
+#[derive(Clone, Debug)]
+pub struct ClientBuilder<S> {
     api_key: Option<String>,
     model: Option<String>,
     retry: Option<RetryPolicy>,
@@ -31,14 +38,64 @@ pub struct ClientBuilder {
     headers: HeaderMap,
     base_url: Option<String>,
     http: Option<HttpClient>,
+    marker: PhantomData<S>,
 }
 
-impl ClientBuilder {
+impl ClientBuilder<NoApiKey> {
+    pub fn api_key(self, api_key: impl Into<String>) -> ClientBuilder<ApiKeySet> {
+        ClientBuilder {
+            api_key: Some(api_key.into()),
+            model: self.model,
+            retry: self.retry,
+            timeout: self.timeout,
+            headers: self.headers,
+            base_url: self.base_url,
+            http: self.http,
+            marker: PhantomData,
+        }
+    }
+}
+
+impl ClientBuilder<ApiKeySet> {
     pub fn api_key(mut self, api_key: impl Into<String>) -> Self {
         self.api_key = Some(api_key.into());
         self
     }
 
+    pub fn build(self) -> Result<Client, Error> {
+        crate::logging::setup();
+        if let Some(retry) = &self.retry {
+            retry.validate()?;
+        }
+        // ApiKeySet is only constructed via api_key(), so the key is always present.
+        let api_key = self
+            .api_key
+            .expect("ApiKeySet guarantees api_key is present");
+        let config = Config::resolve(
+            api_key,
+            self.base_url,
+            self.model,
+            self.timeout,
+            self.headers,
+        )?;
+        let http = match self.http {
+            Some(http) => http,
+            None => HttpClient::builder()
+                .timeout(config.timeout)
+                .build()
+                .map_err(|error| Error::Connection {
+                    message: error.to_string(),
+                })?,
+        };
+        Ok(Client {
+            config,
+            http,
+            retry: self.retry.unwrap_or_default(),
+        })
+    }
+}
+
+impl<S> ClientBuilder<S> {
     pub fn model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
         self
@@ -77,43 +134,35 @@ impl ClientBuilder {
         self.http = Some(http);
         self
     }
+}
 
-    pub fn build(self) -> Result<Client, Error> {
-        crate::logging::setup();
-        if let Some(retry) = &self.retry {
-            retry.validate()?;
+impl Default for ClientBuilder<NoApiKey> {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            model: None,
+            retry: None,
+            timeout: None,
+            headers: HeaderMap::new(),
+            base_url: None,
+            http: None,
+            marker: PhantomData,
         }
-        let config = Config::resolve(
-            self.api_key,
-            self.base_url,
-            self.model,
-            self.timeout,
-            self.headers,
-        )?;
-        let http = match self.http {
-            Some(http) => http,
-            None => HttpClient::builder()
-                .timeout(config.timeout)
-                .build()
-                .map_err(|error| Error::Connection {
-                    message: error.to_string(),
-                })?,
-        };
-        Ok(Client {
-            config,
-            http,
-            retry: self.retry.unwrap_or_default(),
-        })
     }
 }
 
 impl Client {
-    pub fn builder() -> ClientBuilder {
+    pub fn builder() -> ClientBuilder<NoApiKey> {
         ClientBuilder::default()
     }
 
     pub fn from_env() -> Result<Self, Error> {
-        Self::builder().build()
+        let api_key = crate::config::resolve_env(None, API_KEY_ENV, None).ok_or_else(|| {
+            Error::sdk(format!(
+                "No API key was provided. Pass api_key or set the {API_KEY_ENV} environment variable."
+            ))
+        })?;
+        Self::builder().api_key(api_key).build()
     }
 
     pub fn new(api_key: impl Into<String>) -> Result<Self, Error> {

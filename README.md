@@ -87,6 +87,8 @@ let client = Client::builder()
     .build()?;
 ```
 
+The builder is typestated: `build()` only exists after `api_key(...)`, so a missing key is a compile error. `Client::from_env()` still fails at runtime when `TYPESAFE_API_KEY` is unset.
+
 Per-call overrides go on `SystemOneOpts` or `ModelsOpts`: `model`, `timeout`, `retry`, `extra_headers`, and `extra_body`. `extra_body` is a shallow last-write-wins merge over `state`, `model`, and `questions`.
 
 ## Errors and retries

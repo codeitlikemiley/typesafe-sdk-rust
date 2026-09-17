@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::answer::{ListModelsResponse, SystemOneResponse};
-use crate::client::{ClientBuilder, ModelsOpts, SystemOneOpts};
+use crate::client::{ApiKeySet, ClientBuilder, ModelsOpts, NoApiKey, SystemOneOpts};
 use crate::error::Error;
 use crate::json::IntoState;
 use crate::question::Question;
@@ -13,14 +13,21 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn builder() -> Builder {
+    pub fn builder() -> Builder<NoApiKey> {
         Builder {
             inner: crate::Client::builder(),
         }
     }
 
     pub fn from_env() -> Result<Self, Error> {
-        Self::builder().build()
+        let inner = crate::Client::from_env()?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| Error::Connection {
+                message: error.to_string(),
+            })?;
+        Ok(Self { inner, runtime })
     }
 
     pub fn new(api_key: impl Into<String>) -> Result<Self, Error> {
@@ -61,16 +68,39 @@ impl Client {
     }
 }
 
-pub struct Builder {
-    inner: ClientBuilder,
+pub struct Builder<S> {
+    inner: ClientBuilder<S>,
 }
 
-impl Builder {
+impl Builder<NoApiKey> {
+    pub fn api_key(self, api_key: impl Into<String>) -> Builder<ApiKeySet> {
+        Builder {
+            inner: self.inner.api_key(api_key),
+        }
+    }
+}
+
+impl Builder<ApiKeySet> {
     pub fn api_key(mut self, api_key: impl Into<String>) -> Self {
         self.inner = self.inner.api_key(api_key);
         self
     }
 
+    pub fn build(self) -> Result<Client, Error> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| Error::Connection {
+                message: error.to_string(),
+            })?;
+        Ok(Client {
+            inner: self.inner.build()?,
+            runtime,
+        })
+    }
+}
+
+impl<S> Builder<S> {
     pub fn model(mut self, model: impl Into<String>) -> Self {
         self.inner = self.inner.model(model);
         self
@@ -99,18 +129,5 @@ impl Builder {
     pub fn base_url(mut self, base_url: impl Into<String>) -> Self {
         self.inner = self.inner.base_url(base_url);
         self
-    }
-
-    pub fn build(self) -> Result<Client, Error> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|error| Error::Connection {
-                message: error.to_string(),
-            })?;
-        Ok(Client {
-            inner: self.inner.build()?,
-            runtime,
-        })
     }
 }
