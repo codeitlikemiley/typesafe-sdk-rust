@@ -76,22 +76,13 @@ impl Answer {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 /// Token counts reported with a System One response.
 pub struct Usage {
     /// Input tokens used. `None` when the server omits the count.
     pub input_tokens: Option<i64>,
     /// Output tokens used. `None` when the server omits the count.
     pub output_tokens: Option<i64>,
-}
-
-impl Default for Usage {
-    fn default() -> Self {
-        Self {
-            input_tokens: None,
-            output_tokens: None,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
