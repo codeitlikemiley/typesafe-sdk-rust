@@ -1,14 +1,14 @@
 [package]
 name = "typesafe-sdk"
 version = "0.1.0"
-edition = "2021"
-rust-version = "1.83"
+edition = "2024"
+rust-version = "1.85"
 license = "MIT"
 description = "Rust SDK for the TypeSafe AI API"
 readme = "README.md"
 keywords = ["typesafe", "sdk", "api", "ai"]
 categories = ["api-bindings", "asynchronous"]
-authors = ["TypeSafe AI"]
+authors = ["Uriah Galang <codeitlikemiley@gmail.com>"]
 
 [features]
 default = []
