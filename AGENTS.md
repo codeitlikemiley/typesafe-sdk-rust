@@ -71,7 +71,27 @@ async fn main() -> Result<(), typesafe_sdk::Error> {
 }
 ```
 
-Check the same program with `cargo build --example system_one`.
+Check the same program with `cargo build --example system_one --features mock`.
+
+## Cookbook examples
+
+See `examples/README.md` for the full list (fan-out, confidence routing, guardrails, and others).
+
+Mock run (no API key):
+
+```bash
+cargo run --example fan_out --features mock
+```
+
+Live run against your account:
+
+```bash
+export TYPESAFE_API_KEY=...
+export TYPESAFE_LIVE=1
+cargo run --example fan_out
+```
+
+`TYPESAFE_LIVE=1` selects the real API. Without it, examples need `--features mock` and use wiremock fixtures in `examples/support/fixtures.rs`.
 
 ## Read answers
 

@@ -1,0 +1,16 @@
+name: ci
+
+on:
+  push:
+    branches: [main, "gol/**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo fmt --check
+      - run: cargo test --features mock
+      - run: cargo test --features "mock blocking"

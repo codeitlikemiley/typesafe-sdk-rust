@@ -12,9 +12,14 @@ categories = ["api-bindings", "asynchronous"]
 authors = ["Uriah Galang <codeitlikemiley@gmail.com>"]
 exclude = [".github/"]
 
+[[example]]
+name = "blocking_triage"
+required-features = ["blocking"]
+
 [features]
 default = []
 blocking = ["tokio/rt", "tokio/net"]
+mock = ["dep:wiremock"]
 
 [dependencies]
 bytes = "1"
@@ -31,6 +36,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "=1.0.134", features = ["preserve_order"] }
 tokio = { version = "1", default-features = false, features = ["time"] }
 url = "=2.5.4"
+wiremock = { version = "=0.5.22", optional = true }
 
 [dev-dependencies]
 serde_json = { version = "=1.0.134", features = ["preserve_order"] }

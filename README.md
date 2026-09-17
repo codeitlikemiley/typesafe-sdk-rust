@@ -106,13 +106,25 @@ Per-call overrides go on `SystemOneOpts` (`model`, `timeout`, `retry`, `extra_he
 
 Default retries: 2 after the first attempt. Statuses 408, 429, and 5xx. Exponential backoff from 0.5s to 5s with 0.25 jitter. A 30s budget. Honor `Retry-After` and `retry-after-ms`.
 
+## Cookbook examples
+
+Pattern and cookbook samples live under `examples/`. Each example runs against wiremock by default or the live API when `TYPESAFE_LIVE=1`.
+
+```bash
+cargo run --example fan_out --features mock
+TYPESAFE_LIVE=1 cargo run --example fan_out   # needs TYPESAFE_API_KEY
+```
+
+See [examples/README.md](examples/README.md) for the catalog and doc links.
+
 ## Run tests
 
 ```bash
-cargo test
+cargo test --features mock
+cargo test --features "mock blocking"
 ```
 
-Live API calls are not part of `cargo test`. Point `Client::builder().base_url(...)` at a mock, or set `TYPESAFE_API_KEY` and call the real host from your own binary.
+Live API calls are not part of `cargo test`. Cookbook tests use the same wiremock fixtures as the examples. For manual live checks, set `TYPESAFE_LIVE=1` when running an example.
 
 ## Python parity
 

@@ -51,11 +51,11 @@ jobs:
 
       - name: Test
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.skip_crates_publish != 'true'
-        run: cargo test
+        run: cargo test --features mock
 
       - name: Test with blocking feature
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.skip_crates_publish != 'true'
-        run: cargo test --features blocking
+        run: cargo test --features "mock blocking"
 
       - name: Check documentation
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.skip_crates_publish != 'true'
