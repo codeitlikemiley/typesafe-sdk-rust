@@ -4,8 +4,7 @@
 //! typed answers. List available models with [`Client::models`].
 //!
 //! Set `TYPESAFE_API_KEY` or pass `api_key` to [`Client::builder`].
-//! AI coding agents should start with the repo `AGENTS.md` and
-//! `examples/system_one.rs`.
+//! Start from `AGENTS.md` and `examples/system_one.rs` when writing a first call.
 //!
 //! # Example
 //!
@@ -17,11 +16,29 @@
 //!     let client = Client::from_env()?;
 //!     let response = client
 //!         .system_one(
-//!             "I was charged twice.",
-//!             [("billing", Question::noul("Is this about billing?"))],
+//!             serde_json::json!({"document": "I was charged twice. Please fix this ASAP."}),
+//!             [
+//!                 ("billing", Question::noul("Is this ticket about billing?")),
+//!                 (
+//!                     "tone",
+//!                     Question::choice(
+//!                         "What is the customer's tone?",
+//!                         [("calm", None), ("frustrated", None), ("angry", None)],
+//!                     ),
+//!                 ),
+//!                 (
+//!                     "urgency",
+//!                     Question::score(
+//!                         "How urgent is this ticket?",
+//!                         ["can wait", "this week", "today"],
+//!                     ),
+//!                 ),
+//!             ],
 //!         )
 //!         .await?;
 //!     println!("{}", response.noul("billing")?.noul);
+//!     println!("{}", response.choice("tone")?.choice);
+//!     println!("{}", response.score("urgency")?.score);
 //!     Ok(())
 //! }
 //! ```

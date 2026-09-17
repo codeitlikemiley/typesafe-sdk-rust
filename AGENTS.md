@@ -1,12 +1,12 @@
-# Agent guide for typesafe-sdk
-
-How to call TypeSafe System One from Rust without guessing the API.
+# Emit a compiling System One call
 
 ## Goal
 
-Emit a compiling async call that asks named questions and reads typed answers.
+Emit a compiling System One call.
 
 ## Add dependencies
+
+Add these crates to `Cargo.toml`.
 
 ```toml
 [dependencies]
@@ -15,9 +15,27 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde_json = "1"
 ```
 
-Set `TYPESAFE_API_KEY` in the environment before `Client::from_env()`.
+## Set the API key
 
-## Call System One
+Export `TYPESAFE_API_KEY` before you run the program.
+
+`Client::from_env` fails at runtime if the variable is unset or blank.
+
+## Build the client
+
+Prefer `Client::from_env`. Call `system_one`. Read answers with `noul`, `choice`, and `score`.
+
+```rust
+let client = Client::from_env()?;
+```
+
+If you pass the key in code, call `Client::builder().api_key(...).build()` only.
+
+Never call `Client::builder().build()`. The builder is typestated. `build` exists only after `api_key`.
+
+## Ask named questions
+
+Copy this program. Then change the state and the question names.
 
 ```rust
 use typesafe_sdk::{Client, Question};
@@ -34,11 +52,7 @@ async fn main() -> Result<(), typesafe_sdk::Error> {
                     "tone",
                     Question::choice(
                         "What is the customer's tone?",
-                        [
-                            ("calm", None),
-                            ("frustrated", None),
-                            ("angry", None),
-                        ],
+                        [("calm", None), ("frustrated", None), ("angry", None)],
                     ),
                 ),
                 (
@@ -52,45 +66,32 @@ async fn main() -> Result<(), typesafe_sdk::Error> {
         )
         .await?;
 
-    let billing = response.noul("billing")?.noul;
-    let tone = response.choice("tone")?.choice.as_str();
-    let urgency = response.score("urgency")?.score;
-    println!("{billing} {tone} {urgency}");
+    println!("billing={}", response.noul("billing")?.noul);
+    println!("tone={}", response.choice("tone")?.choice);
+    println!("urgency={}", response.score("urgency")?.score);
     Ok(())
 }
 ```
 
-Copy the same pattern from `examples/system_one.rs`.
+Build the same program with `cargo build --example system_one`.
 
-## Build the client
+## Read answers by name
 
-Prefer `Client::from_env()` when the key is in the environment.
+Call the helper that matches the question type.
 
-If you set the key in code, use the typestate builder:
+- `response.noul("billing")` for a noul question
+- `response.choice("tone")` for a choice question
+- `response.score("urgency")` for a score question
 
-```rust
-let client = Client::builder().api_key("sk-...").build()?;
-```
+The answer name must match the question name.
 
-`Client::builder().build()` does not compile. Call `api_key` first.
+There is no `nouls` or `choices` map. Use `response.noul("name")`.
 
-`Client::new("sk-...")` is equivalent to `builder().api_key(...).build()`.
+Scan mixed types through `response.answers`.
 
-## Read answers
+## Call from blocking code
 
-Question names are the lookup keys. Match the answer helper to the question type.
-
-| Question | Lookup | Field |
-| --- | --- | --- |
-| `Question::noul` | `response.noul("name")?` | `.noul` (`f64`, yes probability) |
-| `Question::choice` | `response.choice("name")?` | `.choice` (`String`) |
-| `Question::score` | `response.score("name")?` | `.score` (`f64`) |
-
-Scan mixed types through `response.answers`. There is no `nouls`, `choices`, or `scores` map.
-
-## Blocking client
-
-When the caller cannot be async:
+If the program cannot be async, enable `blocking`. Use `typesafe_sdk::blocking::Client`. Do not `.await`.
 
 ```toml
 typesafe-sdk = { version = "0.1", features = ["blocking"] }
@@ -108,23 +109,20 @@ fn main() -> Result<(), typesafe_sdk::Error> {
 }
 ```
 
-No `.await`. Same question and answer types as the async client.
+## Fix common failures
 
-## Failure checklist
+Work these in order.
 
-Before you invent an API, check these.
+1. There is no `nouls` or `choices` dict. Use `response.noul("name")`, `response.choice("name")`, or `response.score("name")`.
+2. Async code needs Tokio. Add `tokio` with `macros` and `rt-multi-thread`. Use `#[tokio::main]`.
+3. Set `TYPESAFE_API_KEY` or pass `api_key` on the builder.
+4. Answer names must match question names.
+5. Call `api_key` before `build`. `Client::builder().build()` does not compile.
+6. Enable `features = ["blocking"]` before you import `typesafe_sdk::blocking::Client`.
 
-1. Missing `TYPESAFE_API_KEY` makes `from_env` return `Error::Sdk` at runtime.
-2. `builder().build()` without `api_key` is a compile error.
-3. Async `Client` needs a Tokio runtime (`#[tokio::main]` or equivalent).
-4. Blocking types live in `typesafe_sdk::blocking` and need `features = ["blocking"]`.
-5. Do not port Python `result.nouls["name"]`. Use `response.noul("name")?`.
-6. Answer helper and question type must match, or the lookup returns `Error::Sdk`.
-7. Per-call overrides use `SystemOneOpts` / `ModelsOpts`, not ad hoc extra kwargs.
+## Read more
 
-## Where else to look
-
-- Human overview: `README.md`
-- Compile-checked example: `examples/system_one.rs`
-- API docs: https://docs.rs/typesafe-sdk
-- Source of truth for types: `src/client.rs`, `src/question.rs`, `src/answer.rs`, `src/error.rs`
+- `README.md` for install, env defaults, retries, and Python parity
+- https://docs.rs/typesafe-sdk
+- `examples/system_one.rs` for the compile-checked program
+- `src/*.rs` for the public API

@@ -1,10 +1,6 @@
-//! Ask named System One questions and print typed answers.
+//! Named System One questions with typed answers.
 //!
-//! Set `TYPESAFE_API_KEY`, then run:
-//!
-//! ```bash
-//! cargo run --example system_one
-//! ```
+//! Set `TYPESAFE_API_KEY`, then run `cargo run --example system_one`.
 
 use typesafe_sdk::{Client, Question};
 
