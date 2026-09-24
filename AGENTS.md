@@ -33,17 +33,17 @@ To pass the key in code, call `Client::builder().api_key(...).build()`.
 
 ## Another System One server
 
-The default base URL is `https://api.typesafe.ai`. To call your own server with the same `POST /v1/systemone` and `GET /v1/models` contract, set the base URL. Do not append those paths yourself.
+The default base URL is `https://api.typesafe.ai`. To call your own server with the same `POST /v1/systemone` and `GET /v1/models` contract, set the base URL to the origin or a path prefix. Do not append those paths yourself. `tests/contract.rs` (`custom_base_url_serves_system_one_and_models`) sets `{mock}/gateway/` and the client posts to `/gateway/v1/systemone`.
 
 ```rust
 let client = Client::builder()
     .api_key("local-key")
-    .base_url("https://my-host.example")
+    .base_url("https://my-host.example/gateway")
     .model("your-model")
     .build()?;
 ```
 
-`Client::from_env()` reads `TYPESAFE_BASE_URL` when `base_url` is omitted. A trailing slash is stripped. `models()` uses that same base URL. Copy `examples/custom_base_url.rs`. Mock: `cargo run --example custom_base_url --features mock`.
+`Client::from_env()` reads `TYPESAFE_BASE_URL` when `base_url` is omitted. A trailing slash is stripped. `models()` uses that same base URL. Copy `examples/custom_base_url.rs`. Mock mounts `/v1/systemone` on the wiremock origin (`cargo run --example custom_base_url --features mock`). Live requires `TYPESAFE_BASE_URL` and does not fall back to `https://api.typesafe.ai`. The live branch sets `.model("jev-latest")`.
 
 ## Ask questions
 
@@ -154,7 +154,9 @@ fn main() -> Result<(), typesafe_sdk::Error> {
 7. Do not call `blocking::Client` inside an existing Tokio runtime. It panics.
 8. Treat `noul` as a probability (`f64`), not a boolean.
 9. Pin consumer `serde_json` as `"1"`. A newer exact version conflicts with the crate pin.
-10. `base_url` is the server root, not the full `/v1/systemone` path. The client appends `/v1/systemone` and `/v1/models`.
+10. `base_url` is an origin or a path prefix, not the full `/v1/systemone` path. The client appends `/v1/systemone` and `/v1/models`. A prefix such as `…/gateway` is valid. See `custom_base_url_serves_system_one_and_models` in `tests/contract.rs`.
+11. Do not put `?` or `#` in the base URL. The client joins the path with string concatenation, so a query or fragment is not a prefix.
+12. Do not end the base URL with `/v1` or `/v1/`. That joins to `/v1/v1/systemone`.
 
 ## More reading
 

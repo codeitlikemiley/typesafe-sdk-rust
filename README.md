@@ -100,7 +100,9 @@ The builder is typestated. `build()` exists only after `api_key(...)`, so a miss
 
 ## Your own System One server
 
-The default host is `https://api.typesafe.ai`. Point the same client at any server that implements `POST /v1/systemone` and `GET /v1/models`. Set the base URL to the origin (or path prefix) without those suffixes. The client appends them. A trailing slash is removed. `system_one` and `models` use the same base URL.
+The default host is `https://api.typesafe.ai`. Point the same client at any server that implements `POST /v1/systemone` and `GET /v1/models`. Set the base URL to the origin or a path prefix, without those suffixes. The client appends them. A trailing slash is removed. `system_one` and `models` use the same base URL. `tests/contract.rs` locks the prefix pattern. It sets `{mock}/gateway/` and expects `/gateway/v1/systemone` and `/gateway/v1/models`.
+
+Do not put `?` or `#` in the base URL. The client joins the path by string concatenation. Do not end the base URL with `/v1` or `/v1/`. That joins to `/v1/v1/systemone`.
 
 ```rust
 let client = Client::builder()
@@ -114,7 +116,7 @@ let client = Client::builder()
 
 The default model name is `jev-latest`. Pass `model` when your server uses a different name. TLS is rustls. For a custom CA, proxy, or redirect policy, pass your own client to `http_client`. The default `reqwest` client follows up to 10 redirects. Same-origin `307` keeps the POST body and `Authorization` header.
 
-See [`examples/custom_base_url.rs`](examples/custom_base_url.rs).
+See [`examples/custom_base_url.rs`](examples/custom_base_url.rs). The mock mounts `/v1/systemone` on the wiremock origin. Live mode requires `TYPESAFE_BASE_URL` and does not fall back to `https://api.typesafe.ai`. The live branch calls `.model("jev-latest")`.
 
 Per-call overrides go on `SystemOneOpts` (`model`, `timeout`, `retry`, `extra_headers`, `extra_body`) or `ModelsOpts` (`timeout`, `retry`, `extra_headers`). `extra_body` is a shallow last-write-wins merge over `state`, `model`, and `questions`.
 

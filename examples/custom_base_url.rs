@@ -56,6 +56,7 @@ async fn run_live() -> Result<(), typesafe_sdk::Error> {
     let client = Client::builder()
         .api_key(api_key)
         .base_url(base_url.trim())
+        .model("jev-latest")
         .build()?;
     ask(&client, base_url.trim()).await
 }
