@@ -98,6 +98,26 @@ let client = Client::builder()
 
 The builder is typestated. `build()` exists only after `api_key(...)`, so a missing key is a compile error. `Client::from_env()` still fails at runtime when `TYPESAFE_API_KEY` is unset or blank.
 
+## Your own System One server
+
+The default host is `https://api.typesafe.ai`. Point the same client at any server that implements `POST /v1/systemone` and `GET /v1/models`. Set the base URL to the origin or a path prefix, without those suffixes. The client appends them. A trailing slash is removed. `system_one` and `models` use the same base URL. `tests/contract.rs` locks the prefix pattern. It sets `{mock}/gateway/` and expects `/gateway/v1/systemone` and `/gateway/v1/models`.
+
+Do not put `?` or `#` in the base URL. The client joins the path by string concatenation. Do not end the base URL with `/v1` or `/v1/`. That joins to `/v1/v1/systemone`.
+
+```rust
+let client = Client::builder()
+    .api_key("local-key")
+    .base_url("https://my-host.example/gateway")
+    .model("local-model")
+    .build()?;
+```
+
+`TYPESAFE_BASE_URL` does the same thing when you use `Client::from_env()` and do not call `base_url`. An explicit blank or non-http(s) `base_url` fails at `build`. Auth is `Authorization: Bearer <api_key>`. The client also sends `x-typesafe-sdk`, `x-typesafe-runtime`, and `user-agent`. Compatible servers can ignore those headers. `x-typesafe-request-id` is read when the response includes it.
+
+The default model name is `jev-latest`. Pass `model` when your server uses a different name. TLS is rustls. For a custom CA, proxy, or redirect policy, pass your own client to `http_client`. The default `reqwest` client follows up to 10 redirects. Same-origin `307` keeps the POST body and `Authorization` header.
+
+See [`examples/custom_base_url.rs`](examples/custom_base_url.rs). The mock mounts `/v1/systemone` on the wiremock origin. Live mode requires `TYPESAFE_BASE_URL` and does not fall back to `https://api.typesafe.ai`. The live branch calls `.model("jev-latest")`.
+
 Per-call overrides go on `SystemOneOpts` (`model`, `timeout`, `retry`, `extra_headers`, `extra_body`) or `ModelsOpts` (`timeout`, `retry`, `extra_headers`). `extra_body` is a shallow last-write-wins merge over `state`, `model`, and `questions`.
 
 ## Errors and retries
@@ -122,7 +142,10 @@ See [examples/README.md](examples/README.md) for the catalog and doc links.
 ```bash
 cargo test --features mock
 cargo test --features "mock blocking"
+cargo bench --bench client_overhead
 ```
+
+`cargo bench` talks to in-process wiremock only. It does not call `https://api.typesafe.ai`.
 
 Live API calls are not part of `cargo test`. Example integration tests in `tests/examples_integration.rs` use the same wiremock fixtures. For manual live checks, set `TYPESAFE_LIVE=1` when running an example.
 
