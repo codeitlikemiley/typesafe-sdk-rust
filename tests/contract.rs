@@ -425,3 +425,92 @@ fn zero_timeout_is_rejected() {
         .unwrap_err();
     assert!(error.to_string().contains("timeout"));
 }
+
+#[tokio::test]
+async fn custom_base_url_serves_system_one_and_models() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/gateway/v1/systemone"))
+        .and(header("authorization", "Bearer local-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "local-model",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "answers": {"billing": {"type": "noul", "noul": 0.5}}
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/gateway/v1/models"))
+        .and(header("authorization", "Bearer local-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "models": [{
+                "name": "local-model",
+                "description": "not TypeSafe",
+                "release_date": "2026-01-01"
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    let client = Client::builder()
+        .api_key("local-key")
+        .base_url(format!("{}/gateway/", server.uri()))
+        .model("local-model")
+        .retry(RetryPolicy::disabled())
+        .build()
+        .unwrap();
+    let response = client
+        .system_one("ticket", [("billing", Question::noul("Billing?"))])
+        .await
+        .unwrap();
+    let models = client.models().await.unwrap();
+
+    assert_eq!(response.noul("billing").unwrap().noul, 0.5);
+    assert_eq!(models.models[0].name, "local-model");
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].url.path(), "/gateway/v1/systemone");
+    assert_eq!(requests[1].url.path(), "/gateway/v1/models");
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.url.host_str() != Some("api.typesafe.ai"))
+    );
+}
+
+#[tokio::test]
+async fn same_origin_307_is_followed() {
+    let server = MockServer::start().await;
+    let landed = format!("{}/v1/systemone-landed", server.uri());
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .respond_with(ResponseTemplate::new(307).insert_header("location", landed.as_str()))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone-landed"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "model": "local-model",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "answers": {"q": {"type": "noul", "noul": 0.2}}
+        })))
+        .mount(&server)
+        .await;
+
+    let response = client(&server)
+        .await
+        .system_one("x", [("q", Question::noul("?"))])
+        .await
+        .unwrap();
+    assert_eq!(response.noul("q").unwrap().noul, 0.2);
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1].url.path(), "/v1/systemone-landed");
+    let body: Value = serde_json::from_slice(&requests[1].body).unwrap();
+    assert_eq!(body["state"], "x");
+    assert_eq!(
+        request_header(&requests[1], "authorization").as_deref(),
+        Some("Bearer test-key")
+    );
+}

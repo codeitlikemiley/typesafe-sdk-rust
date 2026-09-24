@@ -39,9 +39,14 @@ url = "2.5.4"
 wiremock = { version = "0.5.22", optional = true }
 
 [dev-dependencies]
+criterion = { version = "0.5", features = ["async_tokio"] }
 serde_json = { version = "1.0.134", features = ["preserve_order"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 wiremock = "0.5.22"
+
+[[bench]]
+name = "client_overhead"
+harness = false
 
 [package.metadata.docs.rs]
 all-features = true

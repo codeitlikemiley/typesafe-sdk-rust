@@ -31,6 +31,20 @@ To pass the key in code, call `Client::builder().api_key(...).build()`.
 
 `Client::builder().build()` does not compile. The builder is typestated. `build` exists only after `api_key`.
 
+## Another System One server
+
+The default base URL is `https://api.typesafe.ai`. To call your own server with the same `POST /v1/systemone` and `GET /v1/models` contract, set the base URL. Do not append those paths yourself.
+
+```rust
+let client = Client::builder()
+    .api_key("local-key")
+    .base_url("https://my-host.example")
+    .model("your-model")
+    .build()?;
+```
+
+`Client::from_env()` reads `TYPESAFE_BASE_URL` when `base_url` is omitted. A trailing slash is stripped. `models()` uses that same base URL. Copy `examples/custom_base_url.rs`. Mock: `cargo run --example custom_base_url --features mock`.
+
 ## Ask questions
 
 Copy this program. Change the state and the question names for your task.
@@ -140,6 +154,7 @@ fn main() -> Result<(), typesafe_sdk::Error> {
 7. Do not call `blocking::Client` inside an existing Tokio runtime. It panics.
 8. Treat `noul` as a probability (`f64`), not a boolean.
 9. Pin consumer `serde_json` as `"1"`. A newer exact version conflicts with the crate pin.
+10. `base_url` is the server root, not the full `/v1/systemone` path. The client appends `/v1/systemone` and `/v1/models`.
 
 ## More reading
 
