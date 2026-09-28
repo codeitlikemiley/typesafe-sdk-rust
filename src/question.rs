@@ -1,17 +1,19 @@
 use indexmap::IndexMap;
-use serde::Serialize;
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
 use crate::error::Error;
 use crate::json::JsonContent;
 
 /// Optional yes and no descriptions for a noul question.
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+///
+/// On the wire this is `{"true": ..., "false": ...}`, and serde uses the same keys.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct NoulCriteria {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "true", skip_serializing_if = "Option::is_none")]
     /// Meaning of a yes answer. Omitted from the wire when `None`.
     pub true_meaning: Option<JsonContent>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "false", skip_serializing_if = "Option::is_none")]
     /// Meaning of a no answer. Omitted from the wire when `None`.
     pub false_meaning: Option<JsonContent>,
 }
@@ -47,6 +49,14 @@ impl NoulCriteria {
 }
 
 /// A named question sent to System One.
+///
+/// Serializes to the wire object `{"type": ..., "instructions": ..., "criteria": ...}`.
+/// Deserializing accepts exactly the objects the client would send: a nonempty
+/// string `type`, `criteria` on `choice` and `score`, and at least one score. An
+/// object becomes `Noul`, `Choice`, or `Score` when that variant serializes back
+/// to the same keys and values. Anything else, such as an unknown `type` or an
+/// extra key, stays `Raw` so nothing is dropped. Typed variants write their keys
+/// in the order `type`, `instructions`, `criteria`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Question {
     /// Yes/no question. `instructions` asks the question, `criteria` optionally defines yes/no meanings.
@@ -142,7 +152,21 @@ impl Question {
         }
     }
 
+    /// Errors when the client must not send this question under `name`.
+    pub(crate) fn validate(&self, name: &str) -> Result<(), Error> {
+        let invalid = match self {
+            Self::Score { criteria, .. } if criteria.is_empty() => Some(Invalid::NoScores),
+            Self::Raw(map) => check_raw(map).err(),
+            _ => None,
+        };
+        match invalid {
+            Some(invalid) => Err(Error::sdk(invalid.message(Some(name)))),
+            None => Ok(()),
+        }
+    }
+
     pub(crate) fn to_wire(&self, name: &str) -> Result<Value, Error> {
+        self.validate(name)?;
         match self {
             Self::Noul {
                 instructions,
@@ -187,11 +211,6 @@ impl Question {
                 instructions,
                 criteria,
             } => {
-                if criteria.is_empty() {
-                    return Err(Error::sdk(format!(
-                        "Score question \"{name}\" has no criteria; at least one score is required."
-                    )));
-                }
                 let mut map = Map::new();
                 map.insert("type".to_string(), Value::String("score".to_string()));
                 if let Some(instructions) = instructions {
@@ -206,10 +225,7 @@ impl Question {
                 );
                 Ok(Value::Object(map))
             }
-            Self::Raw(map) => {
-                validate_raw(name, map)?;
-                Ok(Value::Object(map.clone()))
-            }
+            Self::Raw(map) => Ok(Value::Object(map.clone())),
         }
     }
 }
@@ -225,7 +241,94 @@ impl Serialize for Question {
     }
 }
 
-pub(crate) fn normalize_questions<I, K>(questions: I) -> Result<IndexMap<String, Value>, Error>
+impl<'de> Deserialize<'de> for Question {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let map = Map::<String, Value>::deserialize(deserializer)?;
+        check_raw(&map).map_err(|invalid| serde::de::Error::custom(invalid.message(None)))?;
+        Ok(typed(&map).unwrap_or(Self::Raw(map)))
+    }
+}
+
+/// The typed question that serializes to exactly the keys and values of `map`.
+/// `None` when no typed variant can hold `map` without losing something.
+fn typed(map: &Map<String, Value>) -> Option<Question> {
+    if map
+        .keys()
+        .any(|key| !matches!(key.as_str(), "type" | "instructions" | "criteria"))
+    {
+        return None;
+    }
+    let instructions = match map.get("instructions") {
+        Some(value) => Some(content(value)?),
+        None => None,
+    };
+    let criteria = map.get("criteria");
+    match map.get("type").and_then(Value::as_str)? {
+        "noul" => {
+            let criteria = match criteria {
+                None => None,
+                Some(Value::Object(meanings)) => {
+                    if meanings.keys().any(|key| key != "true" && key != "false") {
+                        return None;
+                    }
+                    let meaning = |key: &str| match meanings.get(key) {
+                        None => Some(None),
+                        Some(value) => content(value).map(Some),
+                    };
+                    Some(NoulCriteria {
+                        true_meaning: meaning("true")?,
+                        false_meaning: meaning("false")?,
+                    })
+                }
+                Some(_) => return None,
+            };
+            Some(Question::Noul {
+                instructions,
+                criteria,
+            })
+        }
+        "choice" => {
+            let Some(Value::Object(labels)) = criteria else {
+                return None;
+            };
+            let criteria = labels
+                .iter()
+                .map(|(label, description)| {
+                    let description = match description {
+                        Value::Null => None,
+                        other => Some(content(other)?),
+                    };
+                    Some((label.clone(), description))
+                })
+                .collect::<Option<IndexMap<_, _>>>()?;
+            Some(Question::Choice {
+                instructions,
+                criteria,
+            })
+        }
+        "score" => {
+            let Some(Value::Array(items)) = criteria else {
+                return None;
+            };
+            let criteria = items.iter().map(content).collect::<Option<Vec<_>>>()?;
+            Some(Question::Score {
+                instructions,
+                criteria,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn content(value: &Value) -> Option<JsonContent> {
+    JsonContent::from_value(value.clone()).ok()
+}
+
+/// Validates every question under its name, in order. Errors before any network call.
+pub(crate) fn normalize_questions<I, K>(questions: I) -> Result<IndexMap<String, Question>, Error>
 where
     I: IntoIterator<Item = (K, Question)>,
     K: Into<String>,
@@ -233,7 +336,8 @@ where
     let mut out = IndexMap::new();
     for (name, question) in questions {
         let name = name.into();
-        out.insert(name.clone(), question.to_wire(&name)?);
+        question.validate(&name)?;
+        out.insert(name, question);
     }
     if out.is_empty() {
         return Err(Error::sdk("At least one question is required."));
@@ -241,29 +345,45 @@ where
     Ok(out)
 }
 
-fn validate_raw(name: &str, map: &Map<String, Value>) -> Result<(), Error> {
+/// Why the client refuses to send a question map. Shared by send-time
+/// validation and `Deserialize`, so a server accepts what the client sends.
+#[derive(Clone, Copy)]
+enum Invalid {
+    /// `type` is missing, empty, or not a string.
+    Type,
+    /// A `choice` or `score` question has no `criteria` key.
+    Criteria,
+    /// A `score` question has no scores.
+    NoScores,
+}
+
+impl Invalid {
+    fn message(self, name: Option<&str>) -> String {
+        let name = name.map(|name| format!(" \"{name}\"")).unwrap_or_default();
+        match self {
+            Self::Type => format!(
+                "Question{name} must be a question object or a dictionary with a nonempty string \"type\"."
+            ),
+            Self::Criteria => format!("Question{name} requires \"criteria\"."),
+            Self::NoScores => {
+                format!("Score question{name} has no criteria; at least one score is required.")
+            }
+        }
+    }
+}
+
+fn check_raw(map: &Map<String, Value>) -> Result<(), Invalid> {
     let type_name = match map.get("type") {
         Some(Value::String(text)) if !text.is_empty() => text.as_str(),
-        _ => {
-            return Err(Error::sdk(format!(
-                "Question \"{name}\" must be a question object or a dictionary with a nonempty string \"type\"."
-            )));
-        }
+        _ => return Err(Invalid::Type),
     };
     if matches!(type_name, "choice" | "score") && !map.contains_key("criteria") {
-        return Err(Error::sdk(format!(
-            "Question \"{name}\" requires \"criteria\"."
-        )));
+        return Err(Invalid::Criteria);
     }
-    if type_name == "score" {
-        match map.get("criteria") {
-            Some(Value::Array(items)) if items.is_empty() => {
-                return Err(Error::sdk(format!(
-                    "Score question \"{name}\" has no criteria; at least one score is required."
-                )));
-            }
-            _ => {}
-        }
+    if type_name == "score"
+        && matches!(map.get("criteria"), Some(Value::Array(items)) if items.is_empty())
+    {
+        return Err(Invalid::NoScores);
     }
     Ok(())
 }

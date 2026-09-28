@@ -14,18 +14,20 @@ Requires Rust 1.85 or later. Edition 2024.
 
 ```toml
 [dependencies]
-typesafe-sdk = "0.1"
+typesafe-sdk = "0.2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde_json = "1"
 ```
 
-Write `serde_json = "1"` yourself. Do not let `cargo add` pick a newer patch that conflicts with this crate's `serde_json = "=1.0.134"` pin.
+This crate requires `serde_json = "1.0.134"`, a minimum rather than a pin: any 1.x from 1.0.134 up works, so `serde_json = "1"` or `cargo add serde_json` is fine. It enables `serde_json`'s `preserve_order` feature, which Cargo unifies into your build.
 
 For non-async scripts, enable `blocking`:
 
 ```toml
-typesafe-sdk = { version = "0.1", features = ["blocking"] }
+typesafe-sdk = { version = "0.2", features = ["blocking"] }
 ```
+
+Upgrading from 0.1? See [`CHANGELOG.md`](CHANGELOG.md). 0.2 moves to `reqwest` 0.12 and `http` 1.
 
 ## Call System One
 
@@ -114,11 +116,15 @@ let client = Client::builder()
 
 `TYPESAFE_BASE_URL` does the same thing when you use `Client::from_env()` and do not call `base_url`. An explicit blank or non-http(s) `base_url` fails at `build`. Auth is `Authorization: Bearer <api_key>`. The client also sends `x-typesafe-sdk`, `x-typesafe-runtime`, and `user-agent`. Compatible servers can ignore those headers. `x-typesafe-request-id` is read when the response includes it.
 
-The default model name is `jev-latest`. Pass `model` when your server uses a different name. TLS is rustls. For a custom CA, proxy, or redirect policy, pass your own client to `http_client`. The default `reqwest` client follows up to 10 redirects. Same-origin `307` keeps the POST body and `Authorization` header.
+The default model name is `jev-latest`. Pass `model` when your server uses a different name. TLS is rustls. For a custom CA, proxy, or redirect policy, pass your own `reqwest` 0.12 client to `http_client`. A clone of a client you already use shares its connection pool. The default `reqwest` client follows up to 10 redirects. Same-origin `307` keeps the POST body and `Authorization` header. It speaks HTTP/1.1 and takes proxies from `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY`, not from OS settings. Enable `reqwest`'s `http2` or `system-proxy` feature in your own manifest to change that.
 
 See [`examples/custom_base_url.rs`](examples/custom_base_url.rs). The mock mounts `/v1/systemone` on the wiremock origin. Live mode requires `TYPESAFE_BASE_URL` and does not fall back to `https://api.typesafe.ai`. The live branch calls `.model("jev-latest")`.
 
 Per-call overrides go on `SystemOneOpts` (`model`, `timeout`, `retry`, `extra_headers`, `extra_body`) or `ModelsOpts` (`timeout`, `retry`, `extra_headers`). `extra_body` is a shallow last-write-wins merge over `state`, `model`, and `questions`.
+
+## Serve the System One shape
+
+To be the server instead of the caller, use the types in `typesafe_sdk::wire`. They are the ones the client sends and decodes, and their `Serialize` and `Deserialize` match the wire JSON. Deserialize a request body into `SystemOneRequest`. Build the reply with `SystemOneResponse::new(model, usage, answers)` and the answer constructors, and the models listing with `ModelsResponse::new`. Mount your handlers at `wire::SYSTEM_ONE_PATH` and `wire::MODELS_PATH`. Questions of unknown type stay `Question::Raw` and unknown top-level keys stay in `SystemOneRequest::extra`, so a gateway can forward a request unchanged. See the `wire` module docs and the "Serve the System One shape" section of [`AGENTS.md`](AGENTS.md).
 
 ## Errors and retries
 
@@ -153,7 +159,7 @@ CI runs `cargo fmt --check`, `cargo check`, `cargo clippy`, tests, and example b
 
 ## Python parity
 
-Behavior targets [typesafe-sdk-python](https://github.com/typesafe-ai/typesafe-sdk-python) 0.6.0 and OpenAPI 0.2.0 (`POST /v1/systemone`, `GET /v1/models`). The Rust crate is 0.1.0 because it is a new package, not a version bump of the Python release.
+Behavior targets [typesafe-sdk-python](https://github.com/typesafe-ai/typesafe-sdk-python) 0.6.0 and OpenAPI 0.2.0 (`POST /v1/systemone`, `GET /v1/models`). The Rust crate has its own version line (0.2.0 here). It is not a version bump of the Python release.
 
 Look up one answer with `noul("name")`, `choice("name")`, or `score("name")`. Python's `result.nouls["name"]` maps to that call. Scan mixed types through the public `answers` map. There is no `nouls` dict.
 

@@ -6,6 +6,9 @@
 //! Set `TYPESAFE_API_KEY` or pass `api_key` to [`Client::builder`].
 //! For a first call, read `AGENTS.md` and copy `examples/system_one.rs`.
 //!
+//! To serve the same contract instead of calling it, use the request and
+//! response types in [`wire`]. They serialize and deserialize the wire JSON.
+//!
 //! # Example
 //!
 //! ```rust,ignore
@@ -57,6 +60,7 @@ mod retry;
 #[cfg(feature = "blocking")]
 /// Blocking client built on a current-thread Tokio runtime.
 pub mod blocking;
+pub mod wire;
 
 pub use answer::{
     Answer, ChoiceAnswer, ListModelsResponse, ModelMetadata, NoulAnswer, ScoreAnswer,
@@ -65,6 +69,7 @@ pub use answer::{
 pub use client::{
     ApiKeySet, Client, ClientBuilder, ModelsOpts, NoApiKey, SystemOneOpts, questions,
 };
+pub use wire::{ModelsResponse, SystemOneRequest};
 
 /// Python SDK name. Same type as [`Client`].
 pub type TypeSafeClient = Client;

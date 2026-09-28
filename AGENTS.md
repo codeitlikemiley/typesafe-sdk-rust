@@ -6,12 +6,12 @@ Add these crates to `Cargo.toml`.
 
 ```toml
 [dependencies]
-typesafe-sdk = "0.1"
+typesafe-sdk = "0.2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde_json = "1"
 ```
 
-Write `serde_json = "1"` yourself. Do not run `cargo add serde_json` if that selects a newer patch. This crate pins `serde_json = "=1.0.134"`.
+This crate requires `serde_json = "1.0.134"`. That is a minimum, not a pin: any 1.x from 1.0.134 up satisfies it. `serde_json = "1"` and `cargo add serde_json` both resolve to such a version. The crate enables `serde_json`'s `preserve_order` feature. Cargo unifies features, so your `serde_json::Map` keeps insertion order too.
 
 ## API key
 
@@ -128,7 +128,7 @@ Choice descriptions are `Option<JsonContent>`. Write `Some("Calm".into())`, not 
 If the program cannot be async, enable `blocking` and use `typesafe_sdk::blocking::Client`. Do not `.await`.
 
 ```toml
-typesafe-sdk = { version = "0.1", features = ["blocking"] }
+typesafe-sdk = { version = "0.2", features = ["blocking"] }
 ```
 
 ```rust
@@ -143,6 +143,33 @@ fn main() -> Result<(), typesafe_sdk::Error> {
 }
 ```
 
+## Serve the System One shape
+
+To implement `POST /v1/systemone` and `GET /v1/models` yourself, use `typesafe_sdk::wire`. It holds the same types `Client` sends and decodes. Their `Serialize` and `Deserialize` match the wire JSON.
+
+- Mount handlers at `wire::SYSTEM_ONE_PATH` and `wire::MODELS_PATH` under your base URL.
+- Deserialize the body into `SystemOneRequest` (`state`, `model`, `questions`, `extra`). Unknown top-level keys land in `extra`. Deserialize rejects what the client refuses to send: no `state`, no questions, a question without a nonempty string `type`, `choice` or `score` without `criteria`, or `score` with no scores.
+- A question becomes `Question::Noul`, `Choice`, or `Score` when that variant holds it exactly. Anything else, such as an unknown type or an extra key, stays `Question::Raw` and serializes back unchanged.
+- Build the reply with `SystemOneResponse::new(model, usage, answers)`. Answers are `Answer::Noul(NoulAnswer::new(p))`, `Answer::Choice(ChoiceAnswer::new(label, confidence, probabilities))`, and `Answer::Score(ScoreAnswer::new(score, confidence, legend, probabilities))`.
+- Serve models with `ModelsResponse::new([ModelMetadata::new(name, description, release_date)])`.
+
+```rust
+use typesafe_sdk::wire::{Answer, NoulAnswer, SystemOneRequest, SystemOneResponse, Usage};
+
+fn handle(body: &[u8]) -> Result<Vec<u8>, serde_json::Error> {
+    let request: SystemOneRequest = serde_json::from_slice(body)?;
+    let answers = request
+        .questions
+        .keys()
+        .map(|name| (name.clone(), Answer::Noul(NoulAnswer::new(0.5))));
+    let model = request.model.as_deref().unwrap_or("jev-latest");
+    let response = SystemOneResponse::new(model, Usage::new(Some(12), Some(1)), answers);
+    serde_json::to_vec(&response)
+}
+```
+
+To forward a request upstream, pass `request.state`, `request.questions`, and `SystemOneOpts { model: request.model, extra_body: Some(request.extra), .. }` to `system_one_opts`. The client then sends the bytes it received. `gateway_forwards_a_request_byte_for_byte` in `tests/wire.rs` checks that. A response you build or deserialize has no `request_id()` and an empty `raw_body()`. The compile-checked example is the module doc in `src/wire.rs`.
+
 ## Common failures
 
 1. There is no `nouls` or `choices` dict. Use `response.noul("name")`, `response.choice("name")`, or `response.score("name")`.
@@ -153,7 +180,7 @@ fn main() -> Result<(), typesafe_sdk::Error> {
 6. Enable `features = ["blocking"]` before you import `typesafe_sdk::blocking::Client`.
 7. Do not call `blocking::Client` inside an existing Tokio runtime. It panics.
 8. Treat `noul` as a probability (`f64`), not a boolean.
-9. Pin consumer `serde_json` as `"1"`. A newer exact version conflicts with the crate pin.
+9. `serde_json` must resolve to 1.0.134 or later. An exact pin below that, such as `=1.0.100`, cannot resolve.
 10. `base_url` is an origin or a path prefix, not the full `/v1/systemone` path. The client appends `/v1/systemone` and `/v1/models`. A prefix such as `…/gateway` is valid. See `custom_base_url_serves_system_one_and_models` in `tests/contract.rs`.
 11. Do not put `?` or `#` in the base URL. The client joins the path with string concatenation, so a query or fragment is not a prefix.
 12. Do not end the base URL with `/v1` or `/v1/`. That joins to `/v1/v1/systemone`.
@@ -163,4 +190,6 @@ fn main() -> Result<(), typesafe_sdk::Error> {
 - `README.md` for install, env defaults, retries, and Python parity
 - https://docs.rs/typesafe-sdk
 - `examples/system_one.rs` for the compile-checked program
+- `src/wire.rs` for the server-side wire types
+- `CHANGELOG.md` for what changed in each release
 - `src/*.rs` for the public API

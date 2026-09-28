@@ -19,8 +19,12 @@ pub const DEFAULT_MODEL: &str = "jev-latest";
 /// Default timeout in seconds for each HTTP operation.
 pub const DEFAULT_TIMEOUT_SECS: f64 = 10.0;
 
-pub(crate) const SYSTEM_ONE_PATH: &str = "/v1/systemone";
-pub(crate) const MODELS_PATH: &str = "/v1/models";
+/// Path of the System One endpoint (`POST`), appended to the base URL.
+pub const SYSTEM_ONE_PATH: &str = "/v1/systemone";
+
+/// Path of the models endpoint (`GET`), appended to the base URL.
+pub const MODELS_PATH: &str = "/v1/models";
+
 pub(crate) const SDK_NAME: &str = "typesafe-sdk";
 pub(crate) const JSON_CONTENT_TYPE: &str = "application/json";
 pub(crate) const MAX_ERROR_BODY_LENGTH: usize = 200;
