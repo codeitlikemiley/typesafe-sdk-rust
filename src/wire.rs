@@ -6,13 +6,23 @@
 //! request and serializes the response it builds with the constructors. Mount the
 //! handlers at [`SYSTEM_ONE_PATH`] and [`MODELS_PATH`] under your base URL.
 //!
-//! Serialization matches the JSON the client sends and expects. Unknown request
-//! keys stay in [`SystemOneRequest::extra`], and a question of unknown `type`
-//! stays [`Question::Raw`]. The response types, from [`SystemOneResponse`] and
-//! [`ListModelsResponse`] down to [`Usage`] and each answer, deserialize with the
-//! decoder the client uses. They accept the same input, give the same values, and
-//! name the same field when they fail. An answer of unknown `type` inside a
-//! response is skipped with a warning.
+//! Serialization matches the JSON the client sends and expects.
+//!
+//! Deserializing a [`SystemOneRequest`] rejects a missing `state` or one that is
+//! not a string, object, or array; a `model` that is neither a string nor
+//! `null`; an empty `questions` object; a question that is not an object with a
+//! nonempty string `type`; a `choice` or `score` question without `criteria`;
+//! and a `score` question whose `criteria` is an empty array. The client runs
+//! the same checks before it sends, except on a field that
+//! [`SystemOneOpts::extra_body`](crate::SystemOneOpts::extra_body) replaces.
+//! Unknown top-level keys stay in [`SystemOneRequest::extra`], and a question of
+//! unknown `type` stays [`Question::Raw`].
+//!
+//! The response types, from [`SystemOneResponse`] and [`ListModelsResponse`]
+//! down to [`Usage`] and each answer, deserialize with the decoder the client
+//! uses. They accept the same input, give the same values, and name the same
+//! field when they fail. An answer of unknown `type` inside a response is
+//! skipped with a warning.
 //!
 //! ```
 //! use typesafe_sdk::wire::{

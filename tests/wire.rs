@@ -225,6 +225,10 @@ fn deserialize_rejects_what_the_client_refuses_to_send() {
         (json!({"instructions": "?"}), "nonempty string \"type\""),
         (json!({"type": "choice"}), "requires \"criteria\""),
         (
+            json!({"type": "score", "instructions": "?"}),
+            "requires \"criteria\"",
+        ),
+        (
             json!({"type": "score", "criteria": []}),
             "at least one score",
         ),
@@ -249,6 +253,14 @@ fn deserialize_rejects_what_the_client_refuses_to_send() {
         json!({"state": null, "questions": {"q": {"type": "noul"}}}),
     );
     assert!(null_state.is_err());
+    let number_state = serde_json::from_value::<SystemOneRequest>(
+        json!({"state": 5, "questions": {"q": {"type": "noul"}}}),
+    );
+    assert!(number_state.is_err());
+    let number_model = serde_json::from_value::<SystemOneRequest>(
+        json!({"state": "x", "model": 5, "questions": {"q": {"type": "noul"}}}),
+    );
+    assert!(number_model.is_err());
 }
 
 #[test]
