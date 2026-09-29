@@ -69,7 +69,7 @@ pub use answer::{
 pub use client::{
     ApiKeySet, Client, ClientBuilder, ModelsOpts, NoApiKey, SystemOneOpts, questions,
 };
-pub use wire::{ModelsResponse, SystemOneRequest};
+pub use wire::SystemOneRequest;
 
 /// Python SDK name. Same type as [`Client`].
 pub type TypeSafeClient = Client;

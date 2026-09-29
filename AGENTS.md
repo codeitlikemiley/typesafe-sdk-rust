@@ -151,7 +151,8 @@ To implement `POST /v1/systemone` and `GET /v1/models` yourself, use `typesafe_s
 - Deserialize the body into `SystemOneRequest` (`state`, `model`, `questions`, `extra`). Unknown top-level keys land in `extra`. Deserialize rejects what the client refuses to send: no `state`, no questions, a question without a nonempty string `type`, `choice` or `score` without `criteria`, or `score` with no scores.
 - A question becomes `Question::Noul`, `Choice`, or `Score` when that variant holds it exactly. Anything else, such as an unknown type or an extra key, stays `Question::Raw` and serializes back unchanged.
 - Build the reply with `SystemOneResponse::new(model, usage, answers)`. Answers are `Answer::Noul(NoulAnswer::new(p))`, `Answer::Choice(ChoiceAnswer::new(label, confidence, probabilities))`, and `Answer::Score(ScoreAnswer::new(score, confidence, legend, probabilities))`.
-- Serve models with `ModelsResponse::new([ModelMetadata::new(name, description, release_date)])`.
+- Serve models with `ListModelsResponse::new([ModelMetadata::new(name, description, release_date)])`. It is the type `client.models()` returns.
+- Response types deserialize with the client's own decoder. `SystemOneResponse`, `ListModelsResponse`, `Answer`, the answer structs, `Usage`, and `ModelMetadata` accept what `Client` accepts and name the same field when they fail.
 
 ```rust
 use typesafe_sdk::wire::{Answer, NoulAnswer, SystemOneRequest, SystemOneResponse, Usage};

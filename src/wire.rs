@@ -1,20 +1,22 @@
 //! System One wire types, for callers and for servers.
 //!
 //! [`Client`](crate::Client) serializes a [`SystemOneRequest`] and decodes a
-//! [`SystemOneResponse`] or a models list. A server that serves the same contract
-//! uses the same types in the other direction: it deserializes the request and
-//! serializes the response it builds with the constructors. Mount the handlers at
-//! [`SYSTEM_ONE_PATH`] and [`MODELS_PATH`] under your base URL.
+//! [`SystemOneResponse`] or a [`ListModelsResponse`]. A server that serves the
+//! same contract uses the same types in the other direction: it deserializes the
+//! request and serializes the response it builds with the constructors. Mount the
+//! handlers at [`SYSTEM_ONE_PATH`] and [`MODELS_PATH`] under your base URL.
 //!
-//! Serialization matches the JSON the client sends and expects. Deserialization
-//! is as lenient as the client. Unknown request keys stay in
-//! [`SystemOneRequest::extra`], a question of unknown `type` stays
-//! [`Question::Raw`], and an answer of unknown `type` inside a response is skipped
-//! with a warning.
+//! Serialization matches the JSON the client sends and expects. Unknown request
+//! keys stay in [`SystemOneRequest::extra`], and a question of unknown `type`
+//! stays [`Question::Raw`]. The response types, from [`SystemOneResponse`] and
+//! [`ListModelsResponse`] down to [`Usage`] and each answer, deserialize with the
+//! decoder the client uses. They accept the same input, give the same values, and
+//! name the same field when they fail. An answer of unknown `type` inside a
+//! response is skipped with a warning.
 //!
 //! ```
 //! use typesafe_sdk::wire::{
-//!     Answer, ModelMetadata, ModelsResponse, NoulAnswer, Question, SystemOneRequest,
+//!     Answer, ListModelsResponse, ModelMetadata, NoulAnswer, Question, SystemOneRequest,
 //!     SystemOneResponse, Usage,
 //! };
 //!
@@ -33,7 +35,7 @@
 //!     r#"{"model":"jev-latest","usage":{"input_tokens":12,"output_tokens":1},"answers":{"billing":{"type":"noul","noul":0.97}}}"#
 //! );
 //!
-//! let models = ModelsResponse::new([ModelMetadata::new("jev-latest", "Fast model", "2026-08-01")]);
+//! let models = ListModelsResponse::new([ModelMetadata::new("jev-latest", "Fast model", "2026-08-01")]);
 //! assert_eq!(
 //!     serde_json::to_string(&models)?,
 //!     r#"{"models":[{"name":"jev-latest","description":"Fast model","release_date":"2026-08-01"}]}"#
@@ -47,7 +49,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
 pub use crate::answer::{
-    Answer, ChoiceAnswer, ModelMetadata, NoulAnswer, ScoreAnswer, SystemOneResponse, Usage,
+    Answer, ChoiceAnswer, ListModelsResponse, ModelMetadata, NoulAnswer, ScoreAnswer,
+    SystemOneResponse, Usage,
 };
 pub use crate::constants::{MODELS_PATH, SYSTEM_ONE_PATH};
 pub use crate::json::JsonContent;
@@ -118,24 +121,4 @@ where
         ));
     }
     Ok(questions)
-}
-
-/// Body of `GET /v1/models`: `{"models": [...]}`.
-///
-/// [`Client::models`](crate::Client::models) returns
-/// [`ListModelsResponse`](crate::ListModelsResponse), which adds the request ID
-/// and raw body. This is the plain wire shape, for a server to serialize.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct ModelsResponse {
-    /// Model entries, in the order served.
-    pub models: Vec<ModelMetadata>,
-}
-
-impl ModelsResponse {
-    /// Builds a models listing.
-    pub fn new(models: impl IntoIterator<Item = ModelMetadata>) -> Self {
-        Self {
-            models: models.into_iter().collect(),
-        }
-    }
 }

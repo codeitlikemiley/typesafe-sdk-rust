@@ -5,11 +5,11 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use typesafe_sdk::wire::{
-    Answer, ChoiceAnswer, JsonContent, ModelMetadata, ModelsResponse, NoulAnswer, NoulCriteria,
+    Answer, ChoiceAnswer, JsonContent, ListModelsResponse, ModelMetadata, NoulAnswer, NoulCriteria,
     Question, ScoreAnswer, SystemOneRequest, SystemOneResponse, Usage,
 };
-use typesafe_sdk::{Client, RetryPolicy, SystemOneOpts};
-use wiremock::matchers::{method, path};
+use typesafe_sdk::{ApiErrorKind, Client, RetryPolicy, SystemOneOpts};
+use wiremock::matchers::{any, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// Deserializes `json`, serializes the result, and requires the same bytes back.
@@ -170,15 +170,17 @@ fn usage_counts_are_optional() {
 
 #[test]
 fn models_listing_round_trips_byte_for_byte() {
-    let models: ModelsResponse = round_trip(MODELS);
+    let models: ListModelsResponse = round_trip(MODELS);
     assert_eq!(
         models,
-        ModelsResponse::new([
+        ListModelsResponse::new([
             ModelMetadata::new("jev-latest", "Fast model", "2026-08-01"),
             ModelMetadata::new("jev-large", "Careful model", "2026-09-01"),
         ])
     );
-    round_trip::<ModelsResponse>(r#"{"models":[]}"#);
+    assert!(models.request_id().is_err());
+    assert!(models.raw_body().is_empty());
+    round_trip::<ListModelsResponse>(r#"{"models":[]}"#);
 }
 
 #[test]
@@ -335,7 +337,8 @@ async fn server_built_response_decodes_to_the_same_answers() {
 
 #[tokio::test]
 async fn server_built_models_decode_to_the_same_entries() {
-    let built = ModelsResponse::new([ModelMetadata::new("local-model", "fixture", "2026-01-01")]);
+    let built =
+        ListModelsResponse::new([ModelMetadata::new("local-model", "fixture", "2026-01-01")]);
     let (_server, client) =
         serve("/v1/models", "GET", serde_json::to_string(&built).unwrap()).await;
     assert_eq!(client.models().await.unwrap().models, built.models);
@@ -407,4 +410,234 @@ async fn gateway_forwards_a_request_byte_for_byte() {
         .unwrap();
     let sent = server.received_requests().await.unwrap().remove(0).body;
     assert_eq!(String::from_utf8(sent).unwrap(), REQUEST);
+}
+
+/// Response bodies that probe the client's leniency: absent and `null` fields,
+/// repeated and unknown keys, unknown answer types, and a bad value at each level.
+const RESPONSE_EDGES: &[&str] = &[
+    r#"{"model":"m"}"#,
+    r#"{"model":"a","model":"b","extra":{"kept":false}}"#,
+    r#"{"model":"m","usage":null}"#,
+    r#"{"model":"m","usage":[1,2]}"#,
+    r#"{"model":7}"#,
+    r#"["m"]"#,
+    r#"{"model":"m","answers":[]}"#,
+    r#"{"model":"m","answers":{"x":{"type":"aurora"},"n":{"type":"noul","noul":0.5}}}"#,
+    r#"{"model":"m","answers":{"n":"noul"}}"#,
+    r#"{"model":"m","answers":{"n":{"noul":0.5}}}"#,
+];
+
+/// `usage` objects, each read alone and inside a response.
+const USAGE_EDGES: &[&str] = &[
+    r#"{}"#,
+    r#"{"input_tokens":null,"output_tokens":3,"cached_tokens":9}"#,
+    r#"{"input_tokens":18446744073709551615}"#,
+    r#"{"input_tokens":9223372036854775807,"output_tokens":-4}"#,
+    r#"{"input_tokens":1,"input_tokens":2}"#,
+    r#"{"input_tokens":1.5}"#,
+    r#"{"output_tokens":"3"}"#,
+];
+
+/// Answer objects, each read alone and inside a response.
+const ANSWER_EDGES: &[&str] = &[
+    r#"{"type":"noul","noul":1,"why":"?"}"#,
+    r#"{"type":"noul","noul":0.25,"noul":0.75}"#,
+    r#"{"type":"noul","noul":null}"#,
+    r#"{"type":"choice","choice":"a","confidence":1,"probabilities":{"a":1,"b":0}}"#,
+    r#"{"type":"choice","choice":"a","confidence":1,"probabilities":{"a":"high"}}"#,
+    r#"{"type":"choice","choice":1,"confidence":1,"probabilities":{}}"#,
+    r#"{"type":"score","score":1,"confidence":1,"legend":{"01":"low","1":"high"},"probabilities":{"1":1}}"#,
+    r#"{"type":"score","score":1,"confidence":1,"legend":{"x":"low"},"probabilities":{}}"#,
+    r#"{"type":"score","score":1,"confidence":1,"legend":{"0":null},"probabilities":{}}"#,
+    r#"{"type":"score","score":1,"confidence":1,"legend":{},"probabilities":{"0":"1"}}"#,
+];
+
+/// Models listings, and entries each read alone and inside a listing.
+const MODELS_EDGES: &[&str] = &[
+    r#"{"models":[]}"#,
+    r#"{"models":[{"name":"a","description":"d","release_date":"r"},7]}"#,
+    r#"{"models":{}}"#,
+    r#"{"models":null}"#,
+    r#"{}"#,
+    r#"[]"#,
+];
+const MODEL_EDGES: &[&str] = &[
+    r#"{"name":"a","description":"d","release_date":"r","context_window":128000}"#,
+    r#"{"name":"a","name":"b","description":"d","release_date":"r"}"#,
+    r#"{"name":"a","description":"d"}"#,
+    r#"{"name":null,"description":"d","release_date":"r"}"#,
+    r#"{"name":"a","description":["d"],"release_date":"r"}"#,
+];
+
+/// A mock upstream whose one response body is swapped per case, and a client for it.
+struct Upstream {
+    server: MockServer,
+    client: Client,
+}
+
+impl Upstream {
+    async fn start() -> Self {
+        let server = MockServer::start().await;
+        let client = Client::builder()
+            .api_key("test-key")
+            .base_url(server.uri())
+            .retry(RetryPolicy::disabled())
+            .build()
+            .unwrap();
+        Self { server, client }
+    }
+
+    async fn serve(&self, body: &str) {
+        self.server.reset().await;
+        Mock::given(any())
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(body.to_string(), "application/json"),
+            )
+            .mount(&self.server)
+            .await;
+    }
+
+    /// The client's decode of `body` as a System One response, or the path it rejects.
+    async fn system_one(&self, body: &str) -> Result<SystemOneResponse, String> {
+        self.serve(body).await;
+        self.client
+            .system_one("x", [("q", Question::noul("?"))])
+            .await
+            .map_err(|error| rejected_path(&error))
+    }
+
+    /// The client's decode of `body` as a models listing, or the path it rejects.
+    async fn models(&self, body: &str) -> Result<ListModelsResponse, String> {
+        self.serve(body).await;
+        self.client
+            .models()
+            .await
+            .map_err(|error| rejected_path(&error))
+    }
+}
+
+fn rejected_path(error: &typesafe_sdk::Error) -> String {
+    let api = error.api().unwrap();
+    assert_eq!(api.kind, ApiErrorKind::ResponseValidation, "{error}");
+    api.field_path.clone().unwrap()
+}
+
+/// The path in a serde error that reads `Invalid {what} data at '{path}'.`, or
+/// the whole message when it reads otherwise.
+fn serde_path(error: serde_json::Error, what: &str) -> String {
+    let message = error.to_string();
+    let path = message
+        .strip_prefix(&format!("Invalid {what} data at '"))
+        .and_then(|rest| rest.split_once("'."))
+        .map(|(path, _)| path.to_string());
+    path.unwrap_or(message)
+}
+
+fn without_prefix(path: String, prefix: &str) -> String {
+    path.strip_prefix(prefix)
+        .map(str::to_string)
+        .unwrap_or(path)
+}
+
+/// Reads an answer object with the struct for its `type`, not with `Answer`.
+fn inner_answer(json: &str) -> Result<Answer, String> {
+    let value: Value = serde_json::from_str(json).unwrap();
+    match value["type"].as_str() {
+        Some("noul") => serde_json::from_str(json).map(Answer::Noul),
+        Some("choice") => serde_json::from_str(json).map(Answer::Choice),
+        Some("score") => serde_json::from_str(json).map(Answer::Score),
+        _ => panic!("{json} has no known type"),
+    }
+    .map_err(|error| serde_path(error, "answer"))
+}
+
+/// Every serde impl a server decodes a response with runs the client's decoder:
+/// the same input gives the same value, or an error naming the same field.
+#[tokio::test]
+async fn serde_reads_responses_exactly_as_the_client_does() {
+    let upstream = Upstream::start().await;
+    let mut bodies: Vec<String> = RESPONSE_EDGES.iter().map(|body| body.to_string()).collect();
+    bodies.extend(
+        USAGE_EDGES
+            .iter()
+            .map(|usage| format!(r#"{{"model":"m","usage":{usage}}}"#)),
+    );
+    bodies.extend(
+        ANSWER_EDGES
+            .iter()
+            .map(|answer| format!(r#"{{"model":"m","answers":{{"a":{answer}}}}}"#)),
+    );
+    for body in &bodies {
+        let by_client = upstream
+            .system_one(body)
+            .await
+            .map(|response| (response.model, response.usage, response.answers));
+        let by_serde = serde_json::from_str::<SystemOneResponse>(body)
+            .map(|response| (response.model, response.usage, response.answers))
+            .map_err(|error| serde_path(error, "response"));
+        assert_eq!(by_serde, by_client, "{body}");
+    }
+
+    for usage in USAGE_EDGES {
+        let by_client = upstream
+            .system_one(&format!(r#"{{"model":"m","usage":{usage}}}"#))
+            .await
+            .map(|response| response.usage)
+            .map_err(|path| without_prefix(path, "usage."));
+        let by_serde =
+            serde_json::from_str::<Usage>(usage).map_err(|error| serde_path(error, "usage"));
+        assert_eq!(by_serde, by_client, "{usage}");
+    }
+
+    for answer in ANSWER_EDGES {
+        let by_client = upstream
+            .system_one(&format!(r#"{{"model":"m","answers":{{"a":{answer}}}}}"#))
+            .await
+            .map(|mut response| response.answers.swap_remove("a").unwrap())
+            .map_err(|path| without_prefix(path, "answers.a."));
+        let by_serde =
+            serde_json::from_str::<Answer>(answer).map_err(|error| serde_path(error, "answer"));
+        assert_eq!(by_serde, by_client, "{answer}");
+        assert_eq!(inner_answer(answer), by_client, "{answer}");
+    }
+
+    // The leniency the comparisons above hold serde to.
+    let usage = |json: &str| serde_json::from_str::<Usage>(json).unwrap();
+    assert_eq!(
+        usage(r#"{"input_tokens":18446744073709551615}"#),
+        Usage::new(Some(-1), None)
+    );
+    assert_eq!(
+        usage(r#"{"input_tokens":1,"input_tokens":2}"#),
+        Usage::new(Some(2), None)
+    );
+}
+
+#[tokio::test]
+async fn serde_reads_models_exactly_as_the_client_does() {
+    let upstream = Upstream::start().await;
+    let mut bodies: Vec<String> = MODELS_EDGES.iter().map(|body| body.to_string()).collect();
+    bodies.extend(
+        MODEL_EDGES
+            .iter()
+            .map(|entry| format!(r#"{{"models":[{entry}]}}"#)),
+    );
+    for body in &bodies {
+        let by_client = upstream.models(body).await.map(|listing| listing.models);
+        let by_serde = serde_json::from_str::<ListModelsResponse>(body)
+            .map(|listing| listing.models)
+            .map_err(|error| serde_path(error, "response"));
+        assert_eq!(by_serde, by_client, "{body}");
+    }
+
+    for entry in MODEL_EDGES {
+        let by_client = upstream
+            .models(&format!(r#"{{"models":[{entry}]}}"#))
+            .await
+            .map(|mut listing| listing.models.remove(0))
+            .map_err(|path| without_prefix(path, "models[0]."));
+        let by_serde = serde_json::from_str::<ModelMetadata>(entry)
+            .map_err(|error| serde_path(error, "model"));
+        assert_eq!(by_serde, by_client, "{entry}");
+    }
 }

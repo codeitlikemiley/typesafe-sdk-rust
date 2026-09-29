@@ -8,8 +8,11 @@ use serde_json::{Map, Value};
 use crate::error::{Error, deserialize_body, validation_error};
 use crate::json::JsonContent;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 /// Yes/no answer with a calibrated probability.
+///
+/// Deserializes with the client's decoder. An error names the field, such as
+/// `Invalid answer data at 'noul'.`
 pub struct NoulAnswer {
     /// Probability from 0.0 to 1.0 that the answer is yes.
     pub noul: f64,
@@ -22,8 +25,20 @@ impl NoulAnswer {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+impl<'de> Deserialize<'de> for NoulAnswer {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        decode_with(deserializer, "answer", noul_fields)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 /// Selected label with per-label probabilities.
+///
+/// Deserializes with the client's decoder. An error names the field, such as
+/// `Invalid answer data at 'probabilities.calm'.`
 pub struct ChoiceAnswer {
     /// Selected criteria label.
     pub choice: String,
@@ -52,21 +67,30 @@ impl ChoiceAnswer {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+impl<'de> Deserialize<'de> for ChoiceAnswer {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        decode_with(deserializer, "answer", choice_fields)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 /// Score answer with rubric legend and per-score probabilities.
 ///
 /// On the wire, `legend` and `probabilities` are objects keyed by the score
-/// index as a string, such as `{"0": "bad", "1": "good"}`.
+/// index as a string, such as `{"0": "bad", "1": "good"}`. Deserializes with
+/// the client's decoder. An error names the field, such as
+/// `Invalid answer data at 'probabilities.1'.`
 pub struct ScoreAnswer {
     /// Selected score. Follows the order of the question criteria.
     pub score: f64,
     /// Probability from 0.0 to 1.0 assigned to `score`.
     pub confidence: f64,
     /// Map from score index to its rubric text.
-    #[serde(deserialize_with = "index_keyed")]
     pub legend: BTreeMap<u32, JsonContent>,
     /// Map from score index to its probability from 0.0 to 1.0.
-    #[serde(deserialize_with = "index_keyed")]
     pub probabilities: BTreeMap<u32, f64>,
 }
 
@@ -90,22 +114,13 @@ impl ScoreAnswer {
     }
 }
 
-/// Reads an object keyed by score index. Parses the string keys itself, so it
-/// also works where serde buffers the input, such as a flattened or tagged parent.
-fn index_keyed<'de, D, V>(deserializer: D) -> Result<BTreeMap<u32, V>, D::Error>
-where
-    D: Deserializer<'de>,
-    V: Deserialize<'de>,
-{
-    IndexMap::<String, V>::deserialize(deserializer)?
-        .into_iter()
-        .map(|(key, value)| match key.parse::<u32>() {
-            Ok(index) => Ok((index, value)),
-            Err(_) => Err(serde::de::Error::custom(format!(
-                "score index {key:?} is not an unsigned integer"
-            ))),
-        })
-        .collect()
+impl<'de> Deserialize<'de> for ScoreAnswer {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        decode_with(deserializer, "answer", score_fields)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -169,10 +184,12 @@ impl<'de> Deserialize<'de> for Answer {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 /// Token counts reported with a System One response.
 ///
-/// A `None` count is left out when serialized.
+/// A `None` count is left out when serialized. Deserializes with the client's
+/// decoder: a missing or `null` count reads as `None`, other keys are ignored,
+/// and an error names the count, such as `Invalid usage data at 'input_tokens'.`
 pub struct Usage {
     /// Input tokens used. `None` when the server omits the count.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -192,8 +209,20 @@ impl Usage {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+impl<'de> Deserialize<'de> for Usage {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        decode_with(deserializer, "usage", usage_fields)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 /// One model entry from the models endpoint.
+///
+/// Deserializes with the client's decoder: other keys are ignored, and an
+/// error names the field, such as `Invalid model data at 'name'.`
 pub struct ModelMetadata {
     /// Model name passed as `model` to System One.
     pub name: String,
@@ -218,24 +247,66 @@ impl ModelMetadata {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-/// Models endpoint response with decoded entries.
+impl<'de> Deserialize<'de> for ModelMetadata {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        decode_with(deserializer, "model", model_fields)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+/// Models endpoint response: the wire object `{"models": [...]}`.
+///
+/// [`Client::models`](crate::Client::models) returns it with the request ID and
+/// raw body. A server builds one with [`ListModelsResponse::new`] and serializes
+/// it. Deserializing uses the client's decoder, so a malformed entry is an error
+/// naming its path, such as `Invalid response data at 'models[0].name'.`
 pub struct ListModelsResponse {
-    /// Decoded model entries.
+    /// Model entries, in the order served.
     pub models: Vec<ModelMetadata>,
+    #[serde(skip)]
     request_id: Option<String>,
+    #[serde(skip)]
     raw_body: bytes::Bytes,
 }
 
+impl<'de> Deserialize<'de> for ListModelsResponse {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let models = decode_model_list(&value).map_err(invalid_response)?;
+        Ok(Self::new(models))
+    }
+}
+
 impl ListModelsResponse {
-    /// Returns the `x-typesafe-request-id` response header. Errors when the header is absent.
+    /// Builds a models listing, for example in a server that serves the models
+    /// endpoint.
+    ///
+    /// A listing built here or deserialized with serde has no request ID and an
+    /// empty `raw_body`. Only a listing returned by `Client` carries them.
+    pub fn new(models: impl IntoIterator<Item = ModelMetadata>) -> Self {
+        Self {
+            models: models.into_iter().collect(),
+            request_id: None,
+            raw_body: bytes::Bytes::new(),
+        }
+    }
+
+    /// Returns the `x-typesafe-request-id` response header. Errors when the header is
+    /// absent, and always on a listing from `new` or serde.
     pub fn request_id(&self) -> Result<&str, Error> {
         self.request_id
             .as_deref()
             .ok_or_else(|| Error::sdk("The response did not include a request ID."))
     }
 
-    /// Returns the raw response body bytes exactly as received.
+    /// Returns the raw response body bytes exactly as received. Empty on a
+    /// listing from `new` or serde.
     pub fn raw_body(&self) -> &[u8] {
         &self.raw_body
     }
@@ -266,9 +337,7 @@ impl<'de> Deserialize<'de> for SystemOneResponse {
         D: Deserializer<'de>,
     {
         let value = Value::deserialize(deserializer)?;
-        let (model, usage, answers) = decode_fields(&value).map_err(|path| {
-            serde::de::Error::custom(format!("Invalid response data at '{path}'."))
-        })?;
+        let (model, usage, answers) = decode_fields(&value).map_err(invalid_response)?;
         Ok(Self::new(model, usage, answers))
     }
 }
@@ -335,6 +404,28 @@ impl SystemOneResponse {
     }
 }
 
+/// The serde error for a response body the client would reject at `path`. The
+/// same text as the client's `ApiError` message.
+fn invalid_response<E: serde::de::Error>(path: String) -> E {
+    E::custom(format!("Invalid response data at '{path}'."))
+}
+
+/// Deserializes a JSON object and decodes it with one of the client's field
+/// decoders, so serde and `Client` read it the same way. An error reads
+/// `Invalid {what} data at '{path}'.`
+fn decode_with<'de, D, T>(
+    deserializer: D,
+    what: &str,
+    decode: fn(&Map<String, Value>) -> Result<T, String>,
+) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let object = Map::<String, Value>::deserialize(deserializer)?;
+    decode(&object)
+        .map_err(|path| serde::de::Error::custom(format!("Invalid {what} data at '{path}'.")))
+}
+
 pub(crate) fn decode_system_one(
     status: u16,
     headers: http::HeaderMap,
@@ -371,12 +462,13 @@ fn decode_fields(parsed: &Value) -> Result<(String, Usage, IndexMap<String, Answ
         .and_then(Value::as_str)
         .ok_or_else(|| "model".to_string())?
         .to_string();
-    let usage = object
-        .get("usage")
-        .cloned()
-        .map(decode_usage)
-        .transpose()?
-        .unwrap_or_default();
+    let usage = match object.get("usage") {
+        None => Usage::default(),
+        Some(Value::Object(usage)) => {
+            usage_fields(usage).map_err(|path| format!("usage.{path}"))?
+        }
+        Some(_) => return Err("usage".to_string()),
+    };
     let answers = match object.get("answers") {
         Some(Value::Object(map)) => decode_answers(map)?,
         None => IndexMap::new(),
@@ -391,93 +483,77 @@ pub(crate) fn decode_models(
     endpoint: Option<String>,
     body: bytes::Bytes,
 ) -> Result<ListModelsResponse, Error> {
-    let parsed: Value = serde_json::from_slice(&body).map_err(|_| {
-        validation_error(
+    let models = serde_json::from_slice::<Value>(&body)
+        .map_err(|_| "models".to_string())
+        .and_then(|parsed| decode_model_list(&parsed));
+    match models {
+        Ok(models) => Ok(ListModelsResponse {
+            models,
+            request_id: crate::error::header_str(&headers, crate::constants::REQUEST_ID_HEADER)
+                .map(str::to_string),
+            raw_body: body,
+        }),
+        Err(path) => Err(validation_error(
             status,
             deserialize_body(&body),
-            headers.clone(),
-            endpoint.clone(),
-            "models".to_string(),
-        )
-    })?;
-    let models = match parsed.get("models") {
-        Some(Value::Array(items)) => items
-            .iter()
-            .enumerate()
-            .map(|(index, item)| decode_model(index, item))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|path| {
-                validation_error(
-                    status,
-                    deserialize_body(&body),
-                    headers.clone(),
-                    endpoint.clone(),
-                    path,
-                )
-            })?,
-        _ => {
-            return Err(validation_error(
-                status,
-                deserialize_body(&body),
-                headers,
-                endpoint,
-                "models".to_string(),
-            ));
-        }
+            headers,
+            endpoint,
+            path,
+        )),
+    }
+}
+
+/// Decodes a models listing. Errors with the path of the first bad field, such
+/// as `models[0].name`.
+fn decode_model_list(parsed: &Value) -> Result<Vec<ModelMetadata>, String> {
+    let Some(Value::Array(items)) = parsed.get("models") else {
+        return Err("models".to_string());
     };
-    Ok(ListModelsResponse {
-        models,
-        request_id: crate::error::header_str(&headers, crate::constants::REQUEST_ID_HEADER)
-            .map(str::to_string),
-        raw_body: body,
-    })
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let object = item.as_object().ok_or_else(|| format!("models[{index}]"))?;
+            model_fields(object).map_err(|path| format!("models[{index}].{path}"))
+        })
+        .collect()
 }
 
-fn decode_usage(value: Value) -> Result<Usage, String> {
-    let object = value.as_object().ok_or_else(|| "usage".to_string())?;
+/// Reads the counts of a `usage` object. Errors with the key of a bad count.
+fn usage_fields(object: &Map<String, Value>) -> Result<Usage, String> {
     Ok(Usage {
-        input_tokens: optional_i64(object, "usage.input_tokens", "input_tokens")?,
-        output_tokens: optional_i64(object, "usage.output_tokens", "output_tokens")?,
+        input_tokens: optional_i64(object, "input_tokens")?,
+        output_tokens: optional_i64(object, "output_tokens")?,
     })
 }
 
-fn optional_i64(object: &Map<String, Value>, path: &str, key: &str) -> Result<Option<i64>, String> {
+fn optional_i64(object: &Map<String, Value>, key: &str) -> Result<Option<i64>, String> {
     match object.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::Number(number)) => number
             .as_i64()
             .or_else(|| number.as_u64().map(|value| value as i64))
-            .ok_or_else(|| path.to_string())
+            .ok_or_else(|| key.to_string())
             .map(Some),
-        Some(_) => Err(path.to_string()),
+        Some(_) => Err(key.to_string()),
     }
 }
 
-fn decode_model(index: usize, value: &Value) -> Result<ModelMetadata, String> {
-    let object = value
-        .as_object()
-        .ok_or_else(|| format!("models[{index}]"))?;
+/// Reads one model entry. Errors with the key of a missing or non-string field.
+fn model_fields(object: &Map<String, Value>) -> Result<ModelMetadata, String> {
     Ok(ModelMetadata {
-        name: required_str(object, &format!("models[{index}].name"), "name")?,
-        description: required_str(
-            object,
-            &format!("models[{index}].description"),
-            "description",
-        )?,
-        release_date: required_str(
-            object,
-            &format!("models[{index}].release_date"),
-            "release_date",
-        )?,
+        name: required_str(object, "name")?,
+        description: required_str(object, "description")?,
+        release_date: required_str(object, "release_date")?,
     })
 }
 
-fn required_str(object: &Map<String, Value>, path: &str, key: &str) -> Result<String, String> {
+fn required_str(object: &Map<String, Value>, key: &str) -> Result<String, String> {
     object
         .get(key)
         .and_then(Value::as_str)
         .map(str::to_string)
-        .ok_or_else(|| path.to_string())
+        .ok_or_else(|| key.to_string())
 }
 
 fn decode_answers(map: &Map<String, Value>) -> Result<IndexMap<String, Answer>, String> {
@@ -505,63 +581,69 @@ fn decode_answer(raw: &Value) -> Result<Option<Answer>, String> {
         .and_then(Value::as_str)
         .ok_or_else(|| "type".to_string())?;
     let answer = match tag {
-        "noul" => {
-            let noul = object
-                .get("noul")
-                .and_then(Value::as_f64)
-                .ok_or_else(|| "noul".to_string())?;
-            Answer::Noul(NoulAnswer { noul })
-        }
-        "choice" => {
-            let choice = object
-                .get("choice")
-                .and_then(Value::as_str)
-                .ok_or_else(|| "choice".to_string())?
-                .to_string();
-            let confidence = object
-                .get("confidence")
-                .and_then(Value::as_f64)
-                .ok_or_else(|| "confidence".to_string())?;
-            let probabilities = object
-                .get("probabilities")
-                .and_then(Value::as_object)
-                .ok_or_else(|| "probabilities".to_string())?;
-            let probabilities = probabilities
-                .iter()
-                .map(|(key, value)| {
-                    value
-                        .as_f64()
-                        .map(|number| (key.clone(), number))
-                        .ok_or_else(|| format!("probabilities.{key}"))
-                })
-                .collect::<Result<IndexMap<_, _>, _>>()?;
-            Answer::Choice(ChoiceAnswer {
-                choice,
-                confidence,
-                probabilities,
-            })
-        }
-        "score" => {
-            let score = object
-                .get("score")
-                .and_then(Value::as_f64)
-                .ok_or_else(|| "score".to_string())?;
-            let confidence = object
-                .get("confidence")
-                .and_then(Value::as_f64)
-                .ok_or_else(|| "confidence".to_string())?;
-            let legend = int_content_map(object.get("legend"), "legend")?;
-            let probabilities = int_f64_map(object.get("probabilities"), "probabilities")?;
-            Answer::Score(ScoreAnswer {
-                score,
-                confidence,
-                legend,
-                probabilities,
-            })
-        }
+        "noul" => Answer::Noul(noul_fields(object)?),
+        "choice" => Answer::Choice(choice_fields(object)?),
+        "score" => Answer::Score(score_fields(object)?),
         _ => return Ok(None),
     };
     Ok(Some(answer))
+}
+
+fn noul_fields(object: &Map<String, Value>) -> Result<NoulAnswer, String> {
+    let noul = object
+        .get("noul")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| "noul".to_string())?;
+    Ok(NoulAnswer { noul })
+}
+
+fn choice_fields(object: &Map<String, Value>) -> Result<ChoiceAnswer, String> {
+    let choice = object
+        .get("choice")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "choice".to_string())?
+        .to_string();
+    let confidence = object
+        .get("confidence")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| "confidence".to_string())?;
+    let probabilities = object
+        .get("probabilities")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "probabilities".to_string())?;
+    let probabilities = probabilities
+        .iter()
+        .map(|(key, value)| {
+            value
+                .as_f64()
+                .map(|number| (key.clone(), number))
+                .ok_or_else(|| format!("probabilities.{key}"))
+        })
+        .collect::<Result<IndexMap<_, _>, _>>()?;
+    Ok(ChoiceAnswer {
+        choice,
+        confidence,
+        probabilities,
+    })
+}
+
+fn score_fields(object: &Map<String, Value>) -> Result<ScoreAnswer, String> {
+    let score = object
+        .get("score")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| "score".to_string())?;
+    let confidence = object
+        .get("confidence")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| "confidence".to_string())?;
+    let legend = int_content_map(object.get("legend"), "legend")?;
+    let probabilities = int_f64_map(object.get("probabilities"), "probabilities")?;
+    Ok(ScoreAnswer {
+        score,
+        confidence,
+        legend,
+        probabilities,
+    })
 }
 
 /// The `type` of an answer object `decode_answer` did not recognize.
