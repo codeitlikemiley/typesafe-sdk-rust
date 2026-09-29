@@ -1,6 +1,6 @@
 [package]
 name = "typesafe-sdk"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
@@ -25,24 +25,24 @@ mock = ["dep:wiremock"]
 bytes = "1"
 encoding_rs = "0.8.35"
 fastrand = "2"
-http = "0.2"
+http = "1"
 httpdate = "1"
 idna = "1.0.3"
 idna_adapter = "1.1.0"
 indexmap = { version = "2.7.1", features = ["serde"] }
 log = "0.4"
-reqwest = { version = "0.11.27", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2", "system-proxy", "charset"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1.0.134", features = ["preserve_order"] }
 tokio = { version = "1", default-features = false, features = ["time"] }
 url = "2.5.4"
-wiremock = { version = "0.5.22", optional = true }
+wiremock = { version = "0.6", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["async_tokio"] }
 serde_json = { version = "1.0.134", features = ["preserve_order"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-wiremock = "0.5.22"
+wiremock = "0.6"
 
 [[bench]]
 name = "client_overhead"

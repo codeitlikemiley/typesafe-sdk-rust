@@ -12,8 +12,9 @@ use crate::constants::{API_KEY_ENV, MODELS_PATH, SYSTEM_ONE_PATH};
 use crate::error::{Error, api_error, deserialize_body, format_endpoint};
 use crate::json::IntoState;
 use crate::question::{Question, normalize_questions};
-use crate::request::{PreparedRequest, merge_extra_body, prepare, set_retry_count};
+use crate::request::{PreparedRequest, prepare, set_retry_count};
 use crate::retry::RetryPolicy;
+use crate::wire::SystemOneRequest;
 
 /// Asynchronous TypeSafe client.
 #[derive(Clone, Debug)]
@@ -142,7 +143,10 @@ impl<S> ClientBuilder<S> {
         self
     }
 
-    /// Uses the given `reqwest` client instead of building one from the timeout.
+    /// Uses the given `reqwest` 0.12 client instead of building one from the timeout.
+    ///
+    /// Pass a clone of a client you already have to share its connection pool,
+    /// TLS roots, proxy, and redirect policy. Per-attempt timeouts still apply.
     pub fn http_client(mut self, http: HttpClient) -> Self {
         self.http = Some(http);
         self
@@ -212,24 +216,22 @@ impl Client {
         I: IntoIterator<Item = (K, Question)>,
         K: Into<String>,
     {
-        let mut body = Map::new();
-        body.insert("state".to_string(), Value::from(state.into_state()?));
-        let model = opts
-            .model
-            .as_deref()
-            .unwrap_or(self.config.default_model.as_str());
-        body.insert("model".to_string(), Value::String(model.to_string()));
-        let questions = normalize_questions(questions)?;
-        body.insert(
-            "questions".to_string(),
-            Value::Object(questions.into_iter().collect()),
-        );
-        let body = merge_extra_body(body, opts.extra_body);
+        let body = SystemOneRequest {
+            state: state.into_state()?,
+            model: Some(
+                opts.model
+                    .unwrap_or_else(|| self.config.default_model.clone()),
+            ),
+            questions: normalize_questions(questions)?,
+            extra: opts.extra_body.unwrap_or_default(),
+        };
+        let body = serde_json::to_vec(&body)
+            .map_err(|_| Error::sdk("The request body could not be encoded as JSON"))?;
         let request = prepare(
             &self.config,
             "POST",
             SYSTEM_ONE_PATH,
-            Some(&body),
+            Some(bytes::Bytes::from(body)),
             opts.timeout,
             &opts.extra_headers,
         )?;

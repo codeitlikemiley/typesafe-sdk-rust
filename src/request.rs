@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use http::{HeaderMap, HeaderName, HeaderValue};
-use serde_json::{Map, Value};
 
 use crate::config::Config;
 use crate::constants::{
@@ -23,7 +22,7 @@ pub(crate) fn prepare(
     config: &Config,
     method: &str,
     path: &str,
-    body: Option<&Value>,
+    body: Option<bytes::Bytes>,
     timeout: Option<Duration>,
     extra_headers: &HeaderMap,
 ) -> Result<PreparedRequest, Error> {
@@ -40,34 +39,16 @@ pub(crate) fn prepare(
     set_header(&mut headers, USER_AGENT_HEADER, &identity)?;
     set_header(&mut headers, SDK_HEADER, &identity)?;
     set_header(&mut headers, RUNTIME_HEADER, &runtime_header())?;
-    let encoded = match body {
-        Some(value) => {
-            let bytes = serde_json::to_vec(value)
-                .map_err(|_| Error::sdk("The request body could not be encoded as JSON"))?;
-            set_header(&mut headers, CONTENT_TYPE_HEADER, JSON_CONTENT_TYPE)?;
-            Some(bytes::Bytes::from(bytes))
-        }
-        None => None,
-    };
+    if body.is_some() {
+        set_header(&mut headers, CONTENT_TYPE_HEADER, JSON_CONTENT_TYPE)?;
+    }
     Ok(PreparedRequest {
         method: method.to_string(),
         url: format!("{}{path}", config.base_url),
         headers,
-        body: encoded,
+        body,
         timeout: crate::config::resolve_timeout(timeout.unwrap_or(config.timeout))?,
     })
-}
-
-pub(crate) fn merge_extra_body(
-    mut body: Map<String, Value>,
-    extra_body: Option<Map<String, Value>>,
-) -> Value {
-    if let Some(extra) = extra_body {
-        for (key, value) in extra {
-            body.insert(key, value);
-        }
-    }
-    Value::Object(body)
 }
 
 fn merge_headers(target: &mut HeaderMap, extra: &HeaderMap) {

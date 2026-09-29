@@ -8,13 +8,11 @@ use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn request_header(request: &wiremock::Request, name: &str) -> Option<String> {
-    request.headers.iter().find_map(|(key, values)| {
-        if key.as_str().eq_ignore_ascii_case(name) {
-            values.get(0).map(ToString::to_string)
-        } else {
-            None
-        }
-    })
+    request
+        .headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
 }
 
 fn result_body() -> Value {
@@ -158,6 +156,140 @@ async fn extra_body_overrides_model() {
             "beam_width": 4,
             "nullable": null
         })
+    );
+}
+
+/// Exact request bytes. Recorded from 0.1.2, whose client built the body as a
+/// `serde_json::Map` and merged `extra_body` into it. The `SystemOneRequest`
+/// client must send the same bytes, not only equal JSON.
+#[tokio::test]
+async fn request_body_bytes_are_stable() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/systemone"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(result_body()))
+        .mount(&server)
+        .await;
+    let client = client(&server).await;
+    let raw = |value: Value| Question::raw(value.as_object().unwrap().clone());
+
+    client
+        .system_one(
+            json!({"document": "Hello 🌍", "score": 1.5, "tags": ["a", "b"]}),
+            [
+                ("spam", Question::noul("Spam?")),
+                ("bare", Question::noul_bare()),
+                (
+                    "duplicate",
+                    Question::noul(
+                        JsonContent::from_value(json!({"question": "Duplicate?"})).unwrap(),
+                    )
+                    .with_noul_criteria(
+                        NoulCriteria::new()
+                            .yes("charged twice")
+                            .no(JsonContent::from_value(json!(["one charge"])).unwrap()),
+                    ),
+                ),
+                (
+                    "tone",
+                    Question::choice(
+                        "Tone?",
+                        [
+                            ("friendly", None),
+                            ("hostile", Some("Rude or \"angry\"".into())),
+                        ],
+                    ),
+                ),
+                (
+                    "quality",
+                    Question::score(
+                        "Quality?",
+                        [
+                            JsonContent::from("bad"),
+                            JsonContent::from_value(json!({"label": "great", "min": 2})).unwrap(),
+                        ],
+                    ),
+                ),
+            ],
+        )
+        .await
+        .unwrap();
+
+    let mut extra = serde_json::Map::new();
+    extra.insert("beam_width".to_string(), json!(4));
+    extra.insert("model".to_string(), json!("override-model"));
+    extra.insert("state".to_string(), json!({"replaced": true}));
+    extra.insert("nullable".to_string(), Value::Null);
+    extra.insert("options".to_string(), json!({"z": 1, "a": [0.25, "x"]}));
+    client
+        .system_one_opts(
+            "hi",
+            [
+                ("q", Question::noul("?")),
+                (
+                    "ranked",
+                    raw(json!({"type": "ranking", "instructions": "Order", "items": ["b", "a"]})),
+                ),
+                (
+                    "weighted",
+                    raw(json!({"type": "noul", "instructions": "Spam?", "weight": 3})),
+                ),
+            ],
+            SystemOneOpts {
+                model: Some("call-model".to_string()),
+                extra_body: Some(extra),
+                ..SystemOneOpts::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let mut extra = serde_json::Map::new();
+    extra.insert(
+        "questions".to_string(),
+        json!({"override": {"type": "noul"}}),
+    );
+    client
+        .system_one_opts(
+            json!(["a", 1]),
+            [("q", Question::noul("?"))],
+            SystemOneOpts {
+                extra_body: Some(extra),
+                ..SystemOneOpts::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let bodies: Vec<String> = server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|request| String::from_utf8(request.body).unwrap())
+        .collect();
+    assert_eq!(
+        bodies,
+        [
+            concat!(
+                r#"{"state":{"document":"Hello 🌍","score":1.5,"tags":["a","b"]},"model":"jev-latest","#,
+                r#""questions":{"spam":{"type":"noul","instructions":"Spam?"},"bare":{"type":"noul"},"#,
+                r#""duplicate":{"type":"noul","instructions":{"question":"Duplicate?"},"#,
+                r#""criteria":{"true":"charged twice","false":["one charge"]}},"#,
+                r#""tone":{"type":"choice","instructions":"Tone?","#,
+                r#""criteria":{"friendly":null,"hostile":"Rude or \"angry\""}},"#,
+                r#""quality":{"type":"score","instructions":"Quality?","#,
+                r#""criteria":["bad",{"label":"great","min":2}]}}}"#,
+            ),
+            concat!(
+                r#"{"state":{"replaced":true},"model":"override-model","#,
+                r#""questions":{"q":{"type":"noul","instructions":"?"},"#,
+                r#""ranked":{"type":"ranking","instructions":"Order","items":["b","a"]},"#,
+                r#""weighted":{"type":"noul","instructions":"Spam?","weight":3}},"#,
+                r#""beam_width":4,"nullable":null,"options":{"z":1,"a":[0.25,"x"]}}"#,
+            ),
+            r#"{"state":["a",1],"model":"jev-latest","questions":{"override":{"type":"noul"}}}"#,
+        ]
     );
 }
 
