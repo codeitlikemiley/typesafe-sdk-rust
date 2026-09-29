@@ -278,6 +278,127 @@ fn noul_criteria_uses_the_wire_keys() {
     );
 }
 
+/// A question is typed only when the typed variant writes the same bytes back.
+/// The same keys and values in another order stay `Raw`, which keeps the order.
+#[test]
+fn reordered_questions_stay_raw() {
+    for json in [
+        r#"{"instructions":"x","type":"noul"}"#,
+        r#"{"type":"noul","criteria":{"false":"no","true":"yes"}}"#,
+        r#"{"type":"choice","criteria":{"a":null},"instructions":"x"}"#,
+        r#"{"criteria":["low","high"],"type":"score"}"#,
+    ] {
+        let question: Question = round_trip(json);
+        assert!(matches!(question, Question::Raw(_)), "{json}");
+    }
+
+    assert_eq!(
+        round_trip::<Question>(r#"{"type":"noul","instructions":"x"}"#),
+        Question::noul("x")
+    );
+    assert_eq!(
+        round_trip::<Question>(r#"{"type":"noul","criteria":{"true":"yes","false":"no"}}"#),
+        Question::noul_bare().with_noul_criteria(NoulCriteria::new().yes("yes").no("no"))
+    );
+}
+
+/// Score maps keep the order they arrive in, rather than sorting by index.
+#[test]
+fn score_maps_keep_wire_order() {
+    let score: ScoreAnswer = round_trip(concat!(
+        r#"{"score":2.0,"confidence":0.7,"legend":{"0":"low","10":"high","2":"mid"},"#,
+        r#""probabilities":{"10":0.2,"0":0.1,"2":0.7}}"#,
+    ));
+    assert_eq!(score.legend.keys().copied().collect::<Vec<_>>(), [0, 10, 2]);
+    assert_eq!(
+        score.probabilities.keys().copied().collect::<Vec<_>>(),
+        [10, 0, 2]
+    );
+    assert_eq!(score.legend[&10], JsonContent::from("high"));
+    assert_eq!(score.probabilities[&2], 0.7);
+
+    // Keys are `u32`: a non-canonical key reads as its index and writes canonically.
+    let score: ScoreAnswer = serde_json::from_str(
+        r#"{"score":1.0,"confidence":1.0,"legend":{"01":"one"},"probabilities":{"01":1.0}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_string(&score).unwrap(),
+        r#"{"score":1.0,"confidence":1.0,"legend":{"1":"one"},"probabilities":{"1":1.0}}"#
+    );
+}
+
+/// Response types hold what the client decodes and nothing else. Each pair is
+/// an input and what serializing its decoded value writes.
+#[test]
+fn response_round_trips_keep_only_what_the_client_decodes() {
+    let cases = [
+        // Unknown keys go at every level, and so does a `null` count.
+        (
+            concat!(
+                r#"{"model":"m","trace":"t","usage":{"input_tokens":null,"output_tokens":3,"#,
+                r#""cached_tokens":1},"answers":{"n":{"type":"noul","noul":0.5,"why":"?"}}}"#,
+            ),
+            r#"{"model":"m","usage":{"output_tokens":3},"answers":{"n":{"type":"noul","noul":0.5}}}"#,
+        ),
+        // A missing `usage` or `answers` is written as `{}`.
+        (
+            r#"{"model":"m"}"#,
+            r#"{"model":"m","usage":{},"answers":{}}"#,
+        ),
+        // Fields are written in declaration order.
+        (
+            r#"{"answers":{},"usage":{"output_tokens":1,"input_tokens":2},"model":"m"}"#,
+            r#"{"model":"m","usage":{"input_tokens":2,"output_tokens":1},"answers":{}}"#,
+        ),
+        // An unknown answer type goes, `f64` fields write `1` as `1.0`, and score
+        // keys are `u32`.
+        (
+            concat!(
+                r#"{"model":"m","answers":{"x":{"type":"aurora"},"s":{"confidence":1,"#,
+                r#""type":"score","score":2,"legend":{"02":"hi"},"probabilities":{"02":1}}}}"#,
+            ),
+            concat!(
+                r#"{"model":"m","usage":{},"answers":{"s":{"type":"score","score":2.0,"#,
+                r#""confidence":1.0,"legend":{"2":"hi"},"probabilities":{"2":1.0}}}}"#,
+            ),
+        ),
+        // A count above `i64::MAX` wraps, as it always has in the client.
+        (
+            r#"{"model":"m","usage":{"input_tokens":18446744073709551615}}"#,
+            r#"{"model":"m","usage":{"input_tokens":-1},"answers":{}}"#,
+        ),
+    ];
+    for (input, output) in cases {
+        let response: SystemOneResponse = serde_json::from_str(input).unwrap();
+        assert_eq!(serde_json::to_string(&response).unwrap(), output, "{input}");
+    }
+
+    let listing: ListModelsResponse = serde_json::from_str(concat!(
+        r#"{"models":[{"release_date":"r","name":"a","description":"d","context_window":8}],"#,
+        r#""next":null}"#,
+    ))
+    .unwrap();
+    assert_eq!(
+        serde_json::to_string(&listing).unwrap(),
+        r#"{"models":[{"name":"a","description":"d","release_date":"r"}]}"#
+    );
+}
+
+/// A request writes `state`, `model`, and `questions` first and leaves out a
+/// `null` model. Other keys keep their bytes and relative order.
+#[test]
+fn request_round_trips_put_the_known_keys_first() {
+    let request: SystemOneRequest = serde_json::from_str(
+        r#"{"top_k":3,"questions":{"q":{"type":"noul"}},"model":null,"state":"x","seed":[1]}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_string(&request).unwrap(),
+        r#"{"state":"x","questions":{"q":{"type":"noul"}},"top_k":3,"seed":[1]}"#
+    );
+}
+
 async fn serve(route: &str, verb: &str, body: String) -> (MockServer, Client) {
     let server = MockServer::start().await;
     Mock::given(method(verb))
@@ -314,8 +435,8 @@ async fn server_built_response_decodes_to_the_same_answers() {
                 Answer::Score(ScoreAnswer::new(
                     2.2,
                     0.85,
-                    [(0, "can wait"), (1, "this week"), (2, "today")],
-                    [(0, 0.05), (1, 0.15), (2, 0.8)],
+                    [(2, "today"), (0, "can wait"), (1, "this week")],
+                    [(2, 0.8), (0, 0.05), (1, 0.15)],
                 )),
             ),
         ],
@@ -332,7 +453,16 @@ async fn server_built_response_decodes_to_the_same_answers() {
     assert_eq!(decoded.usage, built.usage);
     assert_eq!(decoded.answers, built.answers);
     assert_eq!(decoded.raw_body(), body.as_bytes());
-    assert_eq!(decoded.score("urgency").unwrap().score, 2.2);
+    let urgency = decoded.score("urgency").unwrap();
+    assert_eq!(urgency.score, 2.2);
+    assert_eq!(
+        urgency.legend.keys().copied().collect::<Vec<_>>(),
+        [2, 0, 1]
+    );
+    assert_eq!(
+        urgency.probabilities.keys().copied().collect::<Vec<_>>(),
+        [2, 0, 1]
+    );
 }
 
 #[tokio::test]

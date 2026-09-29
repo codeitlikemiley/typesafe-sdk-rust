@@ -149,10 +149,10 @@ To implement `POST /v1/systemone` and `GET /v1/models` yourself, use `typesafe_s
 
 - Mount handlers at `wire::SYSTEM_ONE_PATH` and `wire::MODELS_PATH` under your base URL.
 - Deserialize the body into `SystemOneRequest` (`state`, `model`, `questions`, `extra`). Unknown top-level keys land in `extra`. Deserialize rejects what the client refuses to send: no `state`, no questions, a question without a nonempty string `type`, `choice` or `score` without `criteria`, or `score` with no scores.
-- A question becomes `Question::Noul`, `Choice`, or `Score` when that variant holds it exactly. Anything else, such as an unknown type or an extra key, stays `Question::Raw` and serializes back unchanged.
+- A question becomes `Question::Noul`, `Choice`, or `Score` only when that variant serializes back to the same bytes, key order included. Anything else, such as an unknown type, an extra key, or `instructions` before `type`, stays `Question::Raw`. Either way it serializes back with the same keys in the same order.
 - Build the reply with `SystemOneResponse::new(model, usage, answers)`. Answers are `Answer::Noul(NoulAnswer::new(p))`, `Answer::Choice(ChoiceAnswer::new(label, confidence, probabilities))`, and `Answer::Score(ScoreAnswer::new(score, confidence, legend, probabilities))`.
 - Serve models with `ListModelsResponse::new([ModelMetadata::new(name, description, release_date)])`. It is the type `client.models()` returns.
-- Response types deserialize with the client's own decoder. `SystemOneResponse`, `ListModelsResponse`, `Answer`, the answer structs, `Usage`, and `ModelMetadata` accept what `Client` accepts and name the same field when they fail.
+- Response types deserialize with the client's own decoder. `SystemOneResponse`, `ListModelsResponse`, `Answer`, the answer structs, `Usage`, and `ModelMetadata` accept what `Client` accepts and name the same field when they fail. They keep only what the client decodes, so unknown keys, `null` token counts, and answers of unknown type do not survive a round trip. The `wire` module docs list every difference.
 
 ```rust
 use typesafe_sdk::wire::{Answer, NoulAnswer, SystemOneRequest, SystemOneResponse, Usage};
@@ -169,7 +169,7 @@ fn handle(body: &[u8]) -> Result<Vec<u8>, serde_json::Error> {
 }
 ```
 
-To forward a request upstream, pass `request.state`, `request.questions`, and `SystemOneOpts { model: request.model, extra_body: Some(request.extra), .. }` to `system_one_opts`. The client then sends the bytes it received. `gateway_forwards_a_request_byte_for_byte` in `tests/wire.rs` checks that. A response you build or deserialize has no `request_id()` and an empty `raw_body()`. The compile-checked example is the module doc in `src/wire.rs`.
+To forward a request upstream, pass `request.state`, `request.questions`, and `SystemOneOpts { model: request.model, extra_body: Some(request.extra), .. }` to `system_one_opts`. If the request is compact JSON that names a `model` and starts with the keys `state`, `model`, `questions`, the client then sends the bytes it received. Without a `model`, the client sends its default model. `gateway_forwards_a_request_byte_for_byte` in `tests/wire.rs` checks that. A response you build or deserialize has no `request_id()` and an empty `raw_body()`. The compile-checked example is the module doc in `src/wire.rs`.
 
 ## Common failures
 

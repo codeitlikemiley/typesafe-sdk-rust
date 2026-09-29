@@ -124,7 +124,7 @@ Per-call overrides go on `SystemOneOpts` (`model`, `timeout`, `retry`, `extra_he
 
 ## Serve the System One shape
 
-To be the server instead of the caller, use the types in `typesafe_sdk::wire`. They are the ones the client sends and decodes, and their `Serialize` and `Deserialize` match the wire JSON. Deserialize a request body into `SystemOneRequest`. Build the reply with `SystemOneResponse::new(model, usage, answers)` and the answer constructors, and the models listing with `ListModelsResponse::new`, the type `Client::models` returns. Mount your handlers at `wire::SYSTEM_ONE_PATH` and `wire::MODELS_PATH`. Questions of unknown type stay `Question::Raw` and unknown top-level keys stay in `SystemOneRequest::extra`, so a gateway can forward a request unchanged. See the `wire` module docs and the "Serve the System One shape" section of [`AGENTS.md`](AGENTS.md).
+To be the server instead of the caller, use the types in `typesafe_sdk::wire`. They are the ones the client sends and decodes, and their `Serialize` and `Deserialize` match the wire JSON. Deserialize a request body into `SystemOneRequest`. Build the reply with `SystemOneResponse::new(model, usage, answers)` and the answer constructors, and the models listing with `ListModelsResponse::new`, the type `Client::models` returns. Mount your handlers at `wire::SYSTEM_ONE_PATH` and `wire::MODELS_PATH`. Questions of unknown type stay `Question::Raw` and unknown top-level keys stay in `SystemOneRequest::extra`, so a gateway can forward a request without dropping anything. The `wire` module docs list exactly what a deserialize-then-serialize round trip keeps. See the `wire` module docs and the "Serve the System One shape" section of [`AGENTS.md`](AGENTS.md).
 
 ## Errors and retries
 

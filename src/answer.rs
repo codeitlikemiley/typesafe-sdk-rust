@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::fmt;
 
 use indexmap::IndexMap;
@@ -80,22 +79,29 @@ impl<'de> Deserialize<'de> for ChoiceAnswer {
 /// Score answer with rubric legend and per-score probabilities.
 ///
 /// On the wire, `legend` and `probabilities` are objects keyed by the score
-/// index as a string, such as `{"0": "bad", "1": "good"}`. Deserializes with
-/// the client's decoder. An error names the field, such as
+/// index as a string, such as `{"0": "bad", "1": "good"}`. Both maps keep the
+/// order they were read or built in and serialize in that order. Keys are read
+/// as `u32`, so a non-canonical key such as `"01"` reads as index 1 and
+/// serializes as `"1"`, and two keys for one index keep the last value. Look up
+/// an index with `legend[&1]` or `legend.get(&1)`. `legend[1]` also compiles,
+/// but it is `IndexMap`'s positional index: the second entry, whatever its key.
+///
+/// Deserializes with the client's decoder. An error names the field, such as
 /// `Invalid answer data at 'probabilities.1'.`
 pub struct ScoreAnswer {
     /// Selected score. Follows the order of the question criteria.
     pub score: f64,
     /// Probability from 0.0 to 1.0 assigned to `score`.
     pub confidence: f64,
-    /// Map from score index to its rubric text.
-    pub legend: BTreeMap<u32, JsonContent>,
-    /// Map from score index to its probability from 0.0 to 1.0.
-    pub probabilities: BTreeMap<u32, f64>,
+    /// Map from score index to its rubric text, in wire order.
+    pub legend: IndexMap<u32, JsonContent>,
+    /// Map from score index to its probability from 0.0 to 1.0, in wire order.
+    pub probabilities: IndexMap<u32, f64>,
 }
 
 impl ScoreAnswer {
-    /// Builds a score answer. `legend` and `probabilities` are keyed by score index.
+    /// Builds a score answer. `legend` and `probabilities` are keyed by score
+    /// index and keep the given order.
     pub fn new<L, C, P>(score: f64, confidence: f64, legend: L, probabilities: P) -> Self
     where
         L: IntoIterator<Item = (u32, C)>,
@@ -654,11 +660,11 @@ fn answer_type(raw: &Value) -> &str {
 fn int_content_map(
     value: Option<&Value>,
     path: &str,
-) -> Result<BTreeMap<u32, JsonContent>, String> {
+) -> Result<IndexMap<u32, JsonContent>, String> {
     let object = value
         .and_then(Value::as_object)
         .ok_or_else(|| path.to_string())?;
-    let mut out = BTreeMap::new();
+    let mut out = IndexMap::new();
     for (key, item) in object {
         let index = key.parse::<u32>().map_err(|_| path.to_string())?;
         let content = JsonContent::from_value(item.clone()).map_err(|_| path.to_string())?;
@@ -667,11 +673,11 @@ fn int_content_map(
     Ok(out)
 }
 
-fn int_f64_map(value: Option<&Value>, path: &str) -> Result<BTreeMap<u32, f64>, String> {
+fn int_f64_map(value: Option<&Value>, path: &str) -> Result<IndexMap<u32, f64>, String> {
     let object = value
         .and_then(Value::as_object)
         .ok_or_else(|| path.to_string())?;
-    let mut out = BTreeMap::new();
+    let mut out = IndexMap::new();
     for (key, item) in object {
         let index = key.parse::<u32>().map_err(|_| path.to_string())?;
         let number = item.as_f64().ok_or_else(|| format!("{path}.{key}"))?;

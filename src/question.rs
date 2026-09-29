@@ -53,10 +53,12 @@ impl NoulCriteria {
 /// Serializes to the wire object `{"type": ..., "instructions": ..., "criteria": ...}`.
 /// Deserializing accepts exactly the objects the client would send: a nonempty
 /// string `type`, `criteria` on `choice` and `score`, and at least one score. An
-/// object becomes `Noul`, `Choice`, or `Score` when that variant serializes back
-/// to the same keys and values. Anything else, such as an unknown `type` or an
-/// extra key, stays `Raw` so nothing is dropped. Typed variants write their keys
-/// in the order `type`, `instructions`, `criteria`.
+/// object becomes `Noul`, `Choice`, or `Score` only when that variant serializes
+/// back to the same keys and values in the same order. Typed variants write
+/// `type`, `instructions`, `criteria`, and noul criteria `true` before `false`.
+/// Anything else, such as an unknown `type`, an extra key, or `instructions`
+/// before `type`, stays `Raw`. Either way, a deserialized question serializes
+/// back to the same keys and values in the same order.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Question {
     /// Yes/no question. `instructions` asks the question, `criteria` optionally defines yes/no meanings.
@@ -252,8 +254,9 @@ impl<'de> Deserialize<'de> for Question {
     }
 }
 
-/// The typed question that serializes to exactly the keys and values of `map`.
-/// `None` when no typed variant can hold `map` without losing something.
+/// The typed question that serializes back to exactly `map`: the same keys and
+/// values in the same order. `None` when no typed variant does, so the caller
+/// keeps `Raw` and a round trip neither drops nor reorders a key.
 fn typed(map: &Map<String, Value>) -> Option<Question> {
     if map
         .keys()
@@ -266,7 +269,7 @@ fn typed(map: &Map<String, Value>) -> Option<Question> {
         None => None,
     };
     let criteria = map.get("criteria");
-    match map.get("type").and_then(Value::as_str)? {
+    let question = match map.get("type").and_then(Value::as_str)? {
         "noul" => {
             let criteria = match criteria {
                 None => None,
@@ -285,10 +288,10 @@ fn typed(map: &Map<String, Value>) -> Option<Question> {
                 }
                 Some(_) => return None,
             };
-            Some(Question::Noul {
+            Question::Noul {
                 instructions,
                 criteria,
-            })
+            }
         }
         "choice" => {
             let Some(Value::Object(labels)) = criteria else {
@@ -304,22 +307,47 @@ fn typed(map: &Map<String, Value>) -> Option<Question> {
                     Some((label.clone(), description))
                 })
                 .collect::<Option<IndexMap<_, _>>>()?;
-            Some(Question::Choice {
+            Question::Choice {
                 instructions,
                 criteria,
-            })
+            }
         }
         "score" => {
             let Some(Value::Array(items)) = criteria else {
                 return None;
             };
             let criteria = items.iter().map(content).collect::<Option<Vec<_>>>()?;
-            Some(Question::Score {
+            Question::Score {
                 instructions,
                 criteria,
-            })
+            }
         }
+        _ => return None,
+    };
+    // Holding the same keys and values is not enough: `instructions` before
+    // `type`, or `false` before `true`, would come back reordered.
+    match question.to_wire("question") {
+        Ok(Value::Object(wire)) if same_object(&wire, map) => Some(question),
         _ => None,
+    }
+}
+
+/// Whether two objects serialize to the same bytes: the same keys in the same
+/// order, with values that compare the same way all the way down.
+fn same_object(a: &Map<String, Value>, b: &Map<String, Value>) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|((a_key, a_value), (b_key, b_value))| {
+            a_key == b_key && same_value(a_value, b_value)
+        })
+}
+
+fn same_value(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Object(a), Value::Object(b)) => same_object(a, b),
+        (Value::Array(a), Value::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_value(a, b))
+        }
+        _ => a == b,
     }
 }
 

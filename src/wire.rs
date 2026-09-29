@@ -42,6 +42,32 @@
 //! );
 //! # Ok::<(), serde_json::Error>(())
 //! ```
+//!
+//! # Round trips
+//!
+//! Serializing writes compact JSON, so whitespace, string escapes, and number
+//! spellings such as `1e2` come out as `serde_json` writes them. Beyond that:
+//!
+//! - A [`Question`] serializes back to the bytes it was read from, whether it
+//!   became a typed variant or stayed `Raw`.
+//! - A [`SystemOneRequest`] does too when its keys start with `state`, then
+//!   `model` if present, then `questions`, the order the client writes.
+//!   Serializing puts those three first and the other keys after them in their
+//!   original order, and leaves out a `null` `model`.
+//! - The response types hold what the client decodes and nothing else, so a
+//!   round trip changes what they do not hold:
+//!   - Unknown keys are dropped: on the response, an answer, `usage`, the
+//!     listing, and a model entry.
+//!   - Fields are written in declaration order, with an answer's `type` first.
+//!   - A `null` token count is left out, and a missing `usage` or `answers` is
+//!     written as `{}`.
+//!   - An answer of unknown `type` is dropped.
+//!   - `noul`, `score`, `confidence`, and the probabilities are `f64`, so `1` is
+//!     written as `1.0`.
+//!   - Score indexes are `u32`, so a key such as `"01"` is written as `"1"`,
+//!     and two keys for one index merge. Their order is kept.
+//!   - A token count above `i64::MAX` wraps to a negative number, as it always
+//!     has in the client.
 
 use indexmap::IndexMap;
 use serde::ser::SerializeMap;
