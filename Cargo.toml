@@ -31,7 +31,7 @@ idna = "1.0.3"
 idna_adapter = "1.1.0"
 indexmap = { version = "2.7.1", features = ["serde"] }
 log = "0.4"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2", "system-proxy", "charset"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1.0.134", features = ["preserve_order"] }
 tokio = { version = "1", default-features = false, features = ["time"] }

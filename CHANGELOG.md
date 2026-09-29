@@ -11,7 +11,7 @@ The types the client sends and decodes now serve the System One shape in both di
 
 ### Changed
 
-- The built-in HTTP client no longer negotiates HTTP/2 and no longer reads macOS or Windows proxy settings. `reqwest` 0.12 moved both behind its `http2` and `system-proxy` features, and this crate enables only `json` and `rustls-tls`. `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` still apply. Enable either feature in your own manifest, or pass a client to `http_client`.
+- `reqwest` 0.12 moved HTTP/2, the macOS/Windows system proxy, and charset decoding behind features. This crate enables `http2`, `system-proxy` and `charset` alongside `json` and `rustls-tls`, so the built-in client keeps all three, as it did on 0.1.x. It still uses rustls, not the platform TLS that `reqwest`'s own defaults would pull in.
 - The client builds its request body as a `SystemOneRequest`. The bytes on the wire are unchanged. `request_body_bytes_are_stable` in `tests/contract.rs` pins them to 0.1.2's output.
 - The `mock` feature and the tests use `wiremock` 0.6.
 
