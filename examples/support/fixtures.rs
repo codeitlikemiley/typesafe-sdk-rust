@@ -184,3 +184,18 @@ pub fn mixed_primitives() -> Value {
         }
     })
 }
+
+pub fn image_box() -> Value {
+    json!({
+        "model": "jev-latest",
+        "usage": {"input_tokens": 900, "output_tokens": 12},
+        "answers": {
+            "product": {
+                "type": "box",
+                "box": {"top": 0.2, "bottom": 0.66, "left": 0.19, "right": 0.68},
+                "confidence": 0.9
+            },
+            "damaged": {"type": "noul", "noul": 0.12}
+        }
+    })
+}

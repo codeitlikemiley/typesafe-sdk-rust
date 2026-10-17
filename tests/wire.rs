@@ -5,8 +5,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use typesafe_sdk::wire::{
-    Answer, ChoiceAnswer, JsonContent, ListModelsResponse, ModelMetadata, NoulAnswer, NoulCriteria,
-    Question, ScoreAnswer, SystemOneRequest, SystemOneResponse, Usage,
+    Answer, BoxAnswer, BoxCoordinates, ChoiceAnswer, JsonContent, ListModelsResponse,
+    ModelMetadata, NoulAnswer, NoulCriteria, Question, ScoreAnswer, SystemOneRequest,
+    SystemOneResponse, Usage,
 };
 use typesafe_sdk::{ApiErrorKind, Client, RetryPolicy, SystemOneOpts};
 use wiremock::matchers::{any, method, path};
@@ -26,13 +27,14 @@ fn object(value: Value) -> serde_json::Map<String, Value> {
 const REQUEST: &str = concat!(
     r#"{"state":{"document":"Hello 🌍","charges":[49,49.5]},"model":"jev-latest","questions":{"#,
     r#""spam":{"type":"noul","instructions":"Spam?"},"#,
-    r#""bare":{"type":"noul"},"#,
+    r#""bare":{"type":"noul","criteria":{"false":"ham"}},"#,
     r#""duplicate":{"type":"noul","instructions":{"question":"Duplicate?"},"#,
     r#""criteria":{"true":"charged twice","false":["one charge"]}},"#,
     r#""tone":{"type":"choice","instructions":"Tone?","#,
     r#""criteria":{"friendly":null,"hostile":"Rude or \"angry\""}},"#,
     r#""quality":{"type":"score","instructions":"Quality?","#,
     r#""criteria":["bad",{"label":"great","min":2}]},"#,
+    r#""dog":{"type":"box","instructions":"The dog"},"#,
     r#""ranked":{"type":"ranking","instructions":"Order","items":["b","a"]},"#,
     r#""weighted":{"type":"noul","instructions":"Spam?","weight":3}},"#,
     r#""beam_width":4,"nullable":null,"options":{"z":1,"a":[0.25,"x"]}}"#,
@@ -59,7 +61,10 @@ fn request_round_trips_byte_for_byte() {
 
     assert_eq!(request.model.as_deref(), Some("jev-latest"));
     assert_eq!(request.questions["spam"], Question::noul("Spam?"));
-    assert_eq!(request.questions["bare"], Question::noul_bare());
+    assert_eq!(
+        request.questions["bare"],
+        Question::noul_bare().with_noul_criteria(NoulCriteria::new().no("ham"))
+    );
     assert_eq!(
         request.questions["duplicate"],
         Question::noul(JsonContent::from_value(json!({"question": "Duplicate?"})).unwrap())
@@ -89,6 +94,7 @@ fn request_round_trips_byte_for_byte() {
             ],
         )
     );
+    assert_eq!(request.questions["dog"], Question::box_("The dog"));
     // Unknown type, and a known type with a key the typed variant cannot hold.
     assert!(matches!(request.questions["ranked"], Question::Raw(_)));
     assert!(matches!(request.questions["weighted"], Question::Raw(_)));
@@ -101,11 +107,11 @@ fn request_round_trips_byte_for_byte() {
 #[test]
 fn request_without_model_round_trips() {
     let request: SystemOneRequest =
-        round_trip(r#"{"state":"text","questions":{"q":{"type":"noul"}}}"#);
+        round_trip(r#"{"state":"text","questions":{"q":{"type":"noul","instructions":"?"}}}"#);
     assert_eq!(request.model, None);
     assert_eq!(request.state, JsonContent::from("text"));
     let request: SystemOneRequest =
-        round_trip(r#"{"state":["a",1],"questions":{"q":{"type":"noul"}}}"#);
+        round_trip(r#"{"state":["a",1],"questions":{"q":{"type":"noul","instructions":"?"}}}"#);
     assert_eq!(
         request.state,
         JsonContent::from_value(json!(["a", 1])).unwrap()
@@ -153,6 +159,23 @@ fn every_answer_type_round_trips_alone() {
     round_trip::<Answer>(
         r#"{"type":"score","score":0.0,"confidence":1.0,"legend":{"0":"only"},"probabilities":{"0":1.0}}"#,
     );
+    round_trip::<Answer>(
+        r#"{"type":"box","box":{"top":0.2,"bottom":0.66,"left":0.19,"right":0.68},"confidence":0.9}"#,
+    );
+    let answer: Answer = round_trip(
+        r#"{"type":"box","box":{"top":0.0,"bottom":1.0,"left":0.0,"right":1.0},"confidence":null}"#,
+    );
+    assert_eq!(
+        answer,
+        Answer::Box(BoxAnswer::new(
+            BoxCoordinates::new(0.0, 1.0, 0.0, 1.0),
+            None
+        ))
+    );
+    round_trip::<BoxAnswer>(
+        r#"{"box":{"top":0.1,"bottom":0.2,"left":0.3,"right":0.4},"confidence":0.5}"#,
+    );
+    round_trip::<BoxCoordinates>(r#"{"top":0.1,"bottom":0.2,"left":0.3,"right":0.4}"#);
     round_trip::<NoulAnswer>(r#"{"noul":0.5}"#);
     round_trip::<ChoiceAnswer>(r#"{"choice":"a","confidence":1.0,"probabilities":{"a":1.0}}"#);
     round_trip::<ScoreAnswer>(
@@ -230,7 +253,23 @@ fn deserialize_rejects_what_the_client_refuses_to_send() {
         ),
         (
             json!({"type": "score", "criteria": []}),
-            "at least one score",
+            "Score question has no criteria; at least one score is required.",
+        ),
+        (
+            json!({"type": "choice", "criteria": {}}),
+            "Choice question has no criteria; at least one choice is required.",
+        ),
+        (
+            json!({"type": "noul"}),
+            "Noul question has neither instructions nor criteria; at least one is required.",
+        ),
+        (
+            json!({"type": "noul", "criteria": {"true": null}}),
+            "Noul question has neither instructions nor criteria; at least one is required.",
+        ),
+        (
+            json!({"type": "noul", "instructions": "?", "criteria": "yes"}),
+            "Noul question criteria must be an object.",
         ),
     ];
     for (question, message) in cases {
@@ -238,6 +277,14 @@ fn deserialize_rejects_what_the_client_refuses_to_send() {
         assert!(error.to_string().contains(message), "{question}: {error}");
     }
     assert!(serde_json::from_value::<Question>(json!("noul")).is_err());
+    for valid in [
+        json!({"type": "noul", "criteria": {"false": "x"}}),
+        json!({"type": "noul", "instructions": ""}),
+        json!({"type": "box"}),
+    ] {
+        serde_json::from_value::<Question>(valid.clone())
+            .unwrap_or_else(|error| panic!("{valid}: {error}"));
+    }
 
     let empty = serde_json::from_value::<SystemOneRequest>(json!({"state": "x", "questions": {}}));
     assert!(
@@ -246,19 +293,20 @@ fn deserialize_rejects_what_the_client_refuses_to_send() {
             .to_string()
             .contains("At least one question")
     );
-    let no_state =
-        serde_json::from_value::<SystemOneRequest>(json!({"questions": {"q": {"type": "noul"}}}));
+    let no_state = serde_json::from_value::<SystemOneRequest>(
+        json!({"questions": {"q": {"type": "noul", "instructions": "?"}}}),
+    );
     assert!(no_state.is_err());
     let null_state = serde_json::from_value::<SystemOneRequest>(
-        json!({"state": null, "questions": {"q": {"type": "noul"}}}),
+        json!({"state": null, "questions": {"q": {"type": "noul", "instructions": "?"}}}),
     );
     assert!(null_state.is_err());
     let number_state = serde_json::from_value::<SystemOneRequest>(
-        json!({"state": 5, "questions": {"q": {"type": "noul"}}}),
+        json!({"state": 5, "questions": {"q": {"type": "noul", "instructions": "?"}}}),
     );
     assert!(number_state.is_err());
     let number_model = serde_json::from_value::<SystemOneRequest>(
-        json!({"state": "x", "model": 5, "questions": {"q": {"type": "noul"}}}),
+        json!({"state": "x", "model": 5, "questions": {"q": {"type": "noul", "instructions": "?"}}}),
     );
     assert!(number_model.is_err());
 }
@@ -299,6 +347,9 @@ fn reordered_questions_stay_raw() {
         r#"{"type":"noul","criteria":{"false":"no","true":"yes"}}"#,
         r#"{"type":"choice","criteria":{"a":null},"instructions":"x"}"#,
         r#"{"criteria":["low","high"],"type":"score"}"#,
+        r#"{"instructions":"The dog","type":"box"}"#,
+        r#"{"type":"box","instructions":null}"#,
+        r#"{"type":"box","criteria":["dog"]}"#,
     ] {
         let question: Question = round_trip(json);
         assert!(matches!(question, Question::Raw(_)), "{json}");
@@ -311,6 +362,14 @@ fn reordered_questions_stay_raw() {
     assert_eq!(
         round_trip::<Question>(r#"{"type":"noul","criteria":{"true":"yes","false":"no"}}"#),
         Question::noul_bare().with_noul_criteria(NoulCriteria::new().yes("yes").no("no"))
+    );
+    assert_eq!(
+        round_trip::<Question>(r#"{"type":"box"}"#),
+        Question::box_bare()
+    );
+    assert_eq!(
+        round_trip::<Question>(r#"{"type":"box","instructions":["The",{"x":1}]}"#),
+        Question::box_(JsonContent::from_value(json!(["The", {"x": 1}])).unwrap())
     );
 }
 
@@ -402,12 +461,12 @@ fn response_round_trips_keep_only_what_the_client_decodes() {
 #[test]
 fn request_round_trips_put_the_known_keys_first() {
     let request: SystemOneRequest = serde_json::from_str(
-        r#"{"top_k":3,"questions":{"q":{"type":"noul"}},"model":null,"state":"x","seed":[1]}"#,
+        r#"{"top_k":3,"questions":{"q":{"type":"noul","instructions":"?"}},"model":null,"state":"x","seed":[1]}"#,
     )
     .unwrap();
     assert_eq!(
         serde_json::to_string(&request).unwrap(),
-        r#"{"state":"x","questions":{"q":{"type":"noul"}},"top_k":3,"seed":[1]}"#
+        r#"{"state":"x","questions":{"q":{"type":"noul","instructions":"?"}},"top_k":3,"seed":[1]}"#
     );
 }
 
@@ -592,6 +651,11 @@ const ANSWER_EDGES: &[&str] = &[
     r#"{"type":"score","score":1,"confidence":1,"legend":{"x":"low"},"probabilities":{}}"#,
     r#"{"type":"score","score":1,"confidence":1,"legend":{"0":null},"probabilities":{}}"#,
     r#"{"type":"score","score":1,"confidence":1,"legend":{},"probabilities":{"0":"1"}}"#,
+    r#"{"type":"box","box":{"top":0,"bottom":1,"left":0.5,"right":1,"z":2},"confidence":null,"x":1}"#,
+    r#"{"type":"box","box":{"top":0.1,"bottom":0.2,"left":0.3,"right":0.4}}"#,
+    r#"{"type":"box","box":{"top":0.1,"bottom":0.2,"left":0.3,"right":0.4},"confidence":"high"}"#,
+    r#"{"type":"box","box":{"top":0.1,"bottom":0.2,"left":0.3},"confidence":0.5}"#,
+    r#"{"type":"box","box":[0.1,0.2,0.3,0.4],"confidence":0.5}"#,
 ];
 
 /// Models listings, and entries each read alone and inside a listing.
@@ -688,6 +752,7 @@ fn inner_answer(json: &str) -> Result<Answer, String> {
         Some("noul") => serde_json::from_str(json).map(Answer::Noul),
         Some("choice") => serde_json::from_str(json).map(Answer::Choice),
         Some("score") => serde_json::from_str(json).map(Answer::Score),
+        Some("box") => serde_json::from_str(json).map(Answer::Box),
         _ => panic!("{json} has no known type"),
     }
     .map_err(|error| serde_path(error, "answer"))
@@ -753,6 +818,9 @@ async fn serde_reads_responses_exactly_as_the_client_does() {
         usage(r#"{"input_tokens":1,"input_tokens":2}"#),
         Usage::new(Some(2), None)
     );
+    // `confidence` is required on a box answer, though it may be `null`.
+    let error = serde_json::from_str::<Answer>(ANSWER_EDGES[11]).unwrap_err();
+    assert_eq!(error.to_string(), "Invalid answer data at 'confidence'.");
 }
 
 #[tokio::test]

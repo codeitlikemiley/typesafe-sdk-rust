@@ -31,6 +31,11 @@ pub(crate) const MAX_ERROR_BODY_LENGTH: usize = 200;
 pub(crate) const AUTHORIZATION_HEADER: &str = "authorization";
 pub(crate) const ACCEPT_HEADER: &str = "accept";
 pub(crate) const CONTENT_TYPE_HEADER: &str = "content-type";
+#[cfg_attr(not(feature = "zstd"), allow(dead_code))]
+pub(crate) const CONTENT_ENCODING_HEADER: &str = "content-encoding";
+/// Bodies shorter than this are sent uncompressed.
+#[cfg_attr(not(feature = "zstd"), allow(dead_code))]
+pub(crate) const MIN_COMPRESSED_BODY_LENGTH: usize = 1024;
 pub(crate) const USER_AGENT_HEADER: &str = "user-agent";
 pub(crate) const SDK_HEADER: &str = "x-typesafe-sdk";
 pub(crate) const RUNTIME_HEADER: &str = "x-typesafe-runtime";

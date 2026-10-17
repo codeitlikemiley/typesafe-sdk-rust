@@ -130,12 +130,88 @@ impl<'de> Deserialize<'de> for ScoreAnswer {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+/// Edges of a box, as fractions of the image from 0.0 to 1.0.
+///
+/// `top` and `bottom` are fractions of the image height from the top edge,
+/// `left` and `right` fractions of the width from the left edge. Each is the
+/// expected value of that edge's predicted position.
+///
+/// Deserializes with the client's decoder. An error names the field, such as
+/// `Invalid box data at 'top'.`
+pub struct BoxCoordinates {
+    /// Top edge, as a fraction of the image height.
+    pub top: f64,
+    /// Bottom edge, as a fraction of the image height.
+    pub bottom: f64,
+    /// Left edge, as a fraction of the image width.
+    pub left: f64,
+    /// Right edge, as a fraction of the image width.
+    pub right: f64,
+}
+
+impl BoxCoordinates {
+    /// Builds box edges from fractions of the image height and width.
+    pub fn new(top: f64, bottom: f64, left: f64, right: f64) -> Self {
+        Self {
+            top,
+            bottom,
+            left,
+            right,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for BoxCoordinates {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        decode_with(deserializer, "box", coordinate_fields)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+/// A located box with its confidence, the answer to a [`Question::Box`](crate::Question::Box).
+///
+/// On the wire this is `{"box": {...}, "confidence": 0.9}`. `confidence` is
+/// required but may be `null`, so a missing key is an error and `null` reads
+/// as `None`. `None` serializes as `null`.
+///
+/// Deserializes with the client's decoder. An error names the field, such as
+/// `Invalid answer data at 'box.top'.`
+pub struct BoxAnswer {
+    /// The box's edges. The wire key is `box`.
+    #[serde(rename = "box")]
+    pub box_: BoxCoordinates,
+    /// Confidence from 0.0 to 1.0, or `None` when the model gives none.
+    pub confidence: Option<f64>,
+}
+
+impl BoxAnswer {
+    /// Builds a box answer.
+    pub fn new(box_: BoxCoordinates, confidence: Option<f64>) -> Self {
+        Self { box_, confidence }
+    }
+}
+
+impl<'de> Deserialize<'de> for BoxAnswer {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        decode_with(deserializer, "answer", box_fields)
+    }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 /// Typed answer for one named question.
 ///
 /// Serializes with its `type` tag first, such as `{"type":"noul","noul":0.98}`.
 /// Deserializing an answer of any other `type` is an error. Inside a
 /// [`SystemOneResponse`], such answers are skipped instead, as the client does.
+/// New answer types may be added in minor releases.
 pub enum Answer {
     /// Yes/no answer. Holds a `NoulAnswer`.
     Noul(NoulAnswer),
@@ -143,6 +219,8 @@ pub enum Answer {
     Choice(ChoiceAnswer),
     /// Rubric score answer. Holds a `ScoreAnswer`.
     Score(ScoreAnswer),
+    /// Located box. Holds a `BoxAnswer`.
+    Box(BoxAnswer),
 }
 
 impl Answer {
@@ -166,6 +244,14 @@ impl Answer {
     pub fn as_score(&self) -> Option<&ScoreAnswer> {
         match self {
             Self::Score(answer) => Some(answer),
+            _ => None,
+        }
+    }
+
+    /// Returns the inner `BoxAnswer` when the answer is `Answer::Box`, else `None`.
+    pub fn as_box(&self) -> Option<&BoxAnswer> {
+        match self {
+            Self::Box(answer) => Some(answer),
             _ => None,
         }
     }
@@ -335,6 +421,26 @@ pub struct SystemOneResponse {
     request_id: Option<String>,
     #[serde(skip)]
     raw_body: bytes::Bytes,
+    #[serde(skip)]
+    origin: Option<Box<Origin>>,
+}
+
+/// The HTTP response a decoded `SystemOneResponse` came from, for errors.
+#[derive(Clone, PartialEq)]
+struct Origin {
+    status: u16,
+    headers: http::HeaderMap,
+    endpoint: Option<String>,
+}
+
+impl fmt::Debug for Origin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Origin")
+            .field("status", &self.status)
+            .field("headers", &crate::logging::RedactedHeaders(&self.headers))
+            .field("endpoint", &self.endpoint)
+            .finish()
+    }
 }
 
 impl<'de> Deserialize<'de> for SystemOneResponse {
@@ -368,6 +474,7 @@ impl SystemOneResponse {
                 .collect(),
             request_id: None,
             raw_body: bytes::Bytes::new(),
+            origin: None,
         }
     }
 
@@ -407,6 +514,54 @@ impl SystemOneResponse {
             .get(name)
             .and_then(Answer::as_score)
             .ok_or_else(|| Error::sdk(format!("No score answer named \"{name}\".")))
+    }
+
+    /// Returns the box answer called `name`. Errors when the name or type does not match.
+    pub fn box_(&self, name: &str) -> Result<&BoxAnswer, Error> {
+        self.answers
+            .get(name)
+            .and_then(Answer::as_box)
+            .ok_or_else(|| Error::sdk(format!("No box answer named \"{name}\".")))
+    }
+
+    /// Iterates the box answers with their question names, in answer order.
+    /// Python's `result.boxes`.
+    pub fn boxes(&self) -> impl Iterator<Item = (&str, &BoxAnswer)> {
+        self.answers
+            .iter()
+            .filter_map(|(name, answer)| answer.as_box().map(|answer| (name.as_str(), answer)))
+    }
+
+    /// Decodes the raw response body into your own type, like the Python SDK's
+    /// `response_model` for a plain model.
+    ///
+    /// Reads [`raw_body`](Self::raw_body) with `T`'s `Deserialize`, so unknown
+    /// answer types and keys are there for `T` to keep or ignore. On failure the
+    /// error is an [`ApiErrorKind::ResponseValidation`](crate::ApiErrorKind::ResponseValidation)
+    /// whose `field_path` names the failing field, such as
+    /// `answers.spam.noul` or `models[0].name`, with the response's status,
+    /// headers, and request ID. A response from `new` or serde has no raw body,
+    /// so decoding it is an `Error::Sdk`.
+    pub fn decode_as<T: serde::de::DeserializeOwned>(&self) -> Result<T, Error> {
+        let Some(origin) = &self.origin else {
+            return Err(Error::sdk(
+                "The response has no raw body to decode. Only a response returned by Client has one.",
+            ));
+        };
+        let mut deserializer = serde_json::Deserializer::from_slice(&self.raw_body);
+        let path = match serde_path_to_error::deserialize(&mut deserializer) {
+            // The client already parsed this body as one JSON value, so no
+            // trailing bytes can follow it.
+            Ok(value) => return Ok(value),
+            Err(error) => error.path().to_string(),
+        };
+        Err(validation_error(
+            origin.status,
+            deserialize_body(&self.raw_body),
+            origin.headers.clone(),
+            origin.endpoint.clone(),
+            if path == "." { String::new() } else { path },
+        ))
     }
 }
 
@@ -449,6 +604,11 @@ pub(crate) fn decode_system_one(
             request_id: crate::error::header_str(&headers, crate::constants::REQUEST_ID_HEADER)
                 .map(str::to_string),
             raw_body: body,
+            origin: Some(Box::new(Origin {
+                status,
+                headers,
+                endpoint,
+            })),
         }),
         Err(path) => Err(validation_error(
             status,
@@ -590,6 +750,7 @@ fn decode_answer(raw: &Value) -> Result<Option<Answer>, String> {
         "noul" => Answer::Noul(noul_fields(object)?),
         "choice" => Answer::Choice(choice_fields(object)?),
         "score" => Answer::Score(score_fields(object)?),
+        "box" => Answer::Box(box_fields(object)?),
         _ => return Ok(None),
     };
     Ok(Some(answer))
@@ -649,6 +810,35 @@ fn score_fields(object: &Map<String, Value>) -> Result<ScoreAnswer, String> {
         confidence,
         legend,
         probabilities,
+    })
+}
+
+fn box_fields(object: &Map<String, Value>) -> Result<BoxAnswer, String> {
+    let box_ = object
+        .get("box")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "box".to_string())?;
+    let box_ = coordinate_fields(box_).map_err(|path| format!("box.{path}"))?;
+    let confidence = match object.get("confidence") {
+        Some(Value::Null) => None,
+        Some(value) => Some(value.as_f64().ok_or_else(|| "confidence".to_string())?),
+        None => return Err("confidence".to_string()),
+    };
+    Ok(BoxAnswer { box_, confidence })
+}
+
+fn coordinate_fields(object: &Map<String, Value>) -> Result<BoxCoordinates, String> {
+    let edge = |key: &str| {
+        object
+            .get(key)
+            .and_then(Value::as_f64)
+            .ok_or_else(|| key.to_string())
+    };
+    Ok(BoxCoordinates {
+        top: edge("top")?,
+        bottom: edge("bottom")?,
+        left: edge("left")?,
+        right: edge("right")?,
     })
 }
 

@@ -197,6 +197,31 @@ async fn example_noul_uncertainty() {
     assert_eq!(response.noul("fraud_likely").unwrap().noul, 0.48);
 }
 
+#[tokio::test]
+async fn example_images() {
+    let rt = mock_client(fixtures::image_box()).await;
+    let photo = typesafe_sdk::Image::from_bytes(&b"\x89PNG\r\n\x1a\npixel"[..]);
+    let response = rt
+        .client
+        .system_one_opts(
+            format!("Listing photo: {photo}"),
+            [
+                ("product", Question::box_("product?")),
+                ("damaged", Question::noul("damaged?")),
+            ],
+            typesafe_sdk::SystemOneOpts {
+                images: vec![photo],
+                ..typesafe_sdk::SystemOneOpts::default()
+            },
+        )
+        .await
+        .expect("system_one");
+    let product = response.box_("product").unwrap();
+    assert_eq!(product.box_.left, 0.19);
+    assert_eq!(product.confidence, Some(0.9));
+    assert_eq!(response.noul("damaged").unwrap().noul, 0.12);
+}
+
 #[cfg(feature = "blocking")]
 #[test]
 fn example_blocking_triage() {

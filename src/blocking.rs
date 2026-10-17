@@ -1,7 +1,9 @@
 use std::time::Duration;
 
 use crate::answer::{ListModelsResponse, SystemOneResponse};
+use crate::asset::{AttachGuard, Image};
 use crate::client::{ApiKeySet, ClientBuilder, ModelsOpts, NoApiKey, SystemOneOpts};
+use crate::config::Compression;
 use crate::error::Error;
 use crate::json::IntoState;
 use crate::question::Question;
@@ -35,6 +37,12 @@ impl Client {
     /// Builds a blocking `Client` with the given API key and default model, timeout, and retry policy.
     pub fn new(api_key: impl Into<String>) -> Result<Self, Error> {
         Self::builder().api_key(api_key).build()
+    }
+
+    /// Attaches images to this client until the returned guard is dropped. See
+    /// [`crate::Client::attach_assets`].
+    pub fn attach_assets(&self, images: impl IntoIterator<Item = Image>) -> AttachGuard {
+        self.inner.attach_assets(images)
     }
 
     /// Sends `state` and `questions` to `POST /v1/systemone` with client defaults. Returns decoded answers.
@@ -97,6 +105,7 @@ impl Builder<ApiKeySet> {
     }
 
     /// Builds the runtime and returns a blocking `Client`. Reads defaults from the environment for unset fields.
+    /// Validates the API key as [`crate::ClientBuilder::build`] does.
     pub fn build(self) -> Result<Client, Error> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -145,6 +154,13 @@ impl<S> Builder<S> {
     /// Sets the base URL, overriding `TYPESAFE_BASE_URL` and `https://api.typesafe.ai`.
     pub fn base_url(mut self, base_url: impl Into<String>) -> Self {
         self.inner = self.inner.base_url(base_url);
+        self
+    }
+
+    /// Sets how request bodies are compressed. See
+    /// [`crate::ClientBuilder::compression`].
+    pub fn compression(mut self, compression: Compression) -> Self {
+        self.inner = self.inner.compression(compression);
         self
     }
 }
