@@ -632,7 +632,7 @@ async fn malformed_provider_responses_name_the_field() {
         (
             clef(),
             CLEF_PATH,
-            json!({"success": true, "result": {"answers": {}}}),
+            json!({"success": true, "result": {"model": 7, "answers": {}}}),
             "result.model",
         ),
         (
@@ -879,4 +879,32 @@ fn blocking_client_takes_a_provider() {
         .unwrap();
     assert_eq!(response.noul("q").unwrap().noul, 0.4);
     runtime.block_on(server.verify());
+}
+
+/// Workers AI does not document `result.model`; ultra-instinct's production
+/// Clef client never read it. A `result` without it must still decode, and
+/// report the model the request named rather than a fixed default.
+#[tokio::test]
+async fn clef_result_without_model_reports_the_requested_model() {
+    let server = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "success": true,
+            "result": {"answers": {"q": {"type": "noul", "noul": 0.25}}}
+        })))
+        .mount(&server)
+        .await;
+    let response = client(&server, clef())
+        .system_one_opts(
+            "x",
+            [("q", Question::noul("?"))],
+            SystemOneOpts {
+                model: Some("clef-flash".to_string()),
+                ..SystemOneOpts::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.model, "clef-flash");
+    assert_eq!(response.noul("q").unwrap().noul, 0.25);
 }

@@ -96,12 +96,15 @@ fn valid_name(name: &str) -> bool {
 
 /// Unwraps the envelope. `success: false` or any entry in `errors` is an
 /// `Error::Api` carrying Cloudflare's messages. `result` decodes as a System
-/// One response, with error paths under `result.`.
+/// One response, with error paths under `result.`. Workers AI does not
+/// document `result.model`, so a `result` without it reports `model`, the
+/// model the request named.
 pub(crate) fn decode(
     status: u16,
     headers: http::HeaderMap,
     endpoint: Option<String>,
     body: bytes::Bytes,
+    model: &str,
 ) -> Result<SystemOneResponse, Error> {
     let parsed = serde_json::from_slice::<Value>(&body).ok();
     let envelope = parsed.as_ref().and_then(Value::as_object);
@@ -126,6 +129,11 @@ pub(crate) fn decode(
         }
     }
     let fields = match envelope.and_then(|envelope| envelope.get("result")) {
+        Some(Value::Object(result)) if !result.contains_key("model") => {
+            let mut result = result.clone();
+            result.insert("model".to_string(), Value::String(model.to_string()));
+            decode_fields(&Value::Object(result)).map_err(|path| format!("result.{path}"))
+        }
         Some(result) => decode_fields(result).map_err(|path| format!("result.{path}")),
         None => Err("result".to_string()),
     };

@@ -350,7 +350,7 @@ impl Client {
                 (
                     crate::provider::clef::path(account_id, &model),
                     Payload::json(json),
-                    Decoder::Clef,
+                    Decoder::Clef(model),
                 )
             }
             #[cfg(feature = "openai-decisions")]
@@ -386,10 +386,10 @@ impl Client {
                 decode_system_one(status, headers, Some(endpoint), bytes)
             }
             #[cfg(feature = "clef")]
-            Decoder::Clef => {
+            Decoder::Clef(model) => {
                 let (status, headers, endpoint, bytes) =
                     sent.map_err(crate::provider::clef::with_cloudflare_message)?;
-                crate::provider::clef::decode(status, headers, Some(endpoint), bytes)
+                crate::provider::clef::decode(status, headers, Some(endpoint), bytes, &model)
             }
             #[cfg(feature = "openai-decisions")]
             Decoder::OpenAi(plan) => {
@@ -605,8 +605,9 @@ fn map_reqwest_error(
 /// How a provider's response body is decoded.
 enum Decoder {
     SystemOne,
+    /// Carries the model the request named, for a `result` that omits it.
     #[cfg(feature = "clef")]
-    Clef,
+    Clef(String),
     #[cfg(feature = "openai-decisions")]
     OpenAi(crate::provider::openai::Plan),
 }
