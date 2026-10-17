@@ -6,7 +6,7 @@ Add these crates to `Cargo.toml`.
 
 ```toml
 [dependencies]
-typesafe-sdk = "0.2"
+typesafe-sdk = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde_json = "1"
 ```
@@ -18,6 +18,8 @@ This crate requires `serde_json = "1.0.134"`. That is a minimum, not a pin: any 
 Export `TYPESAFE_API_KEY` before you run the program.
 
 `Client::from_env` returns `Error::Sdk` when the variable is unset or blank.
+
+`build` trims the key. It returns `Error::Sdk` for a key with spaces, tabs, inner line breaks, or any character outside printable ASCII. The message never contains the key.
 
 ## Client
 
@@ -123,12 +125,88 @@ Scan mixed types through `response.answers`.
 
 Choice descriptions are `Option<JsonContent>`. Write `Some("Calm".into())`, not `Some("Calm")`.
 
+`response.box_("dog")?` is a `BoxAnswer`. `box` is a Rust keyword, so the method and the field end in `_`.
+
+## Send images
+
+Wrap the bytes or the path in `Image`. Put the image in text with `format!("{image}")`, and pass it in `SystemOneOpts::images`.
+
+```rust
+use typesafe_sdk::{Client, Image, Question, SystemOneOpts};
+
+let client = Client::builder()
+    .api_key(std::env::var("TYPESAFE_API_KEY").unwrap())
+    .header("TypeSafe-Danger-Zone-Images", "true")?
+    .build()?;
+let photo = Image::from_path("photos/dog.png");
+let response = client
+    .system_one_opts(
+        format!("Photo: {photo}"),
+        [("dog", Question::noul("Is there a dog in the photo?"))],
+        SystemOneOpts { images: vec![photo], ..SystemOneOpts::default() },
+    )
+    .await?;
+```
+
+- The API needs the header `TypeSafe-Danger-Zone-Images: true` for images. The client does not add it.
+- To use a name instead of the reference, put the image in `SystemOneOpts::assets` under that name, such as `"<photo>"`, and write the name in the text. Every name in `assets` is sent, used or not.
+- An image in `images` is sent only when its reference is in the request.
+- `Image::from_bytes(bytes)`, `Image::from_path(path)`, and `Image::from_base64(text)` make an image. A file is read when the first request sends it, then kept.
+- An empty image or an unreadable file fails the call before any request, with a message naming the alias.
+- Do not put the same image under a name and also write its reference. It is then sent twice, once per key.
+- No Pillow. Encode the image yourself and pass the bytes.
+
+Copy `examples/images.rs` (`cargo run --example images --features mock`).
+
+## Attach images to a client
+
+`client.attach_assets([image.clone()])` returns an `AttachGuard`. While it lives, every call on that client, and on its clones, sends the image when its reference is in the request.
+
+```rust
+let _attached = client.attach_assets([photo.clone()]);
+let response = client
+    .system_one(format!("Photo: {photo}"), [("q", Question::noul("Is it damaged?"))])
+    .await?;
+```
+
+- Bind the guard to a named variable such as `_attached`. `let _ = ...` drops it at once.
+- Attaching an image twice holds it twice. It stays attached until both guards are dropped.
+- The guard is `Send`, so it can move into a spawned task.
+
+## Box questions
+
+`Question::box_("The dog")` asks where something is in an image. `Question::box_bare()` sends `{"type":"box"}`. The request must contain an image.
+
+```rust
+let response = client
+    .system_one_opts(
+        format!("Photo: {photo}"),
+        [("dog", Question::box_("The dog"))],
+        SystemOneOpts { images: vec![photo], ..SystemOneOpts::default() },
+    )
+    .await?;
+let answer = response.box_("dog")?;
+println!("{} {} {} {} {:?}", answer.box_.top, answer.box_.bottom, answer.box_.left, answer.box_.right, answer.confidence);
+```
+
+- Edges are fractions from 0.0 to 1.0. `top` and `bottom` are of the image height from the top; `left` and `right` of the width from the left.
+- `confidence` is `Option<f64>`. `None` means the model gave none.
+- `response.boxes()` iterates every box answer with its name.
+
+## Compression
+
+Request bodies of 1024 bytes or more go zstd-compressed with `Content-Encoding: zstd`. This needs the `zstd` feature, which is on by default.
+
+- For a server that does not accept compressed bodies, build with `.compression(Compression::None)`.
+- With `default-features = false`, bodies go uncompressed, and `.compression(Compression::Zstd)` fails at `build`.
+- The `zstd` feature needs a C compiler.
+
 ## Blocking client
 
 If the program cannot be async, enable `blocking` and use `typesafe_sdk::blocking::Client`. Do not `.await`.
 
 ```toml
-typesafe-sdk = { version = "0.2", features = ["blocking"] }
+typesafe-sdk = { version = "0.3", features = ["blocking"] }
 ```
 
 ```rust
@@ -148,9 +226,11 @@ fn main() -> Result<(), typesafe_sdk::Error> {
 To implement `POST /v1/systemone` and `GET /v1/models` yourself, use `typesafe_sdk::wire`. It holds the same types `Client` sends and decodes. Their `Serialize` and `Deserialize` match the wire JSON.
 
 - Mount handlers at `wire::SYSTEM_ONE_PATH` and `wire::MODELS_PATH` under your base URL.
-- Deserialize the body into `SystemOneRequest` (`state`, `model`, `questions`, `extra`). Unknown top-level keys land in `extra`. Deserialize rejects what the client refuses to send: no `state`, no questions, a question without a nonempty string `type`, `choice` or `score` without `criteria`, or `score` with no scores.
-- A question becomes `Question::Noul`, `Choice`, or `Score` only when that variant serializes back to the same bytes, key order included. Anything else, such as an unknown type, an extra key, or `instructions` before `type`, stays `Question::Raw`. Either way it serializes back with the same keys in the same order.
-- Build the reply with `SystemOneResponse::new(model, usage, answers)`. Answers are `Answer::Noul(NoulAnswer::new(p))`, `Answer::Choice(ChoiceAnswer::new(label, confidence, probabilities))`, and `Answer::Score(ScoreAnswer::new(score, confidence, legend, probabilities))`.
+- Deserialize the body into `SystemOneRequest` (`state`, `model`, `questions`, `extra`). Unknown top-level keys land in `extra`. Deserialize rejects what the client refuses to send: no `state`, no questions, a question without a nonempty string `type`, `choice` or `score` without `criteria` or with empty `criteria`, `noul` with `criteria` that is not an object, or `noul` with neither `instructions` nor a non-null meaning.
+- An image request is `multipart/form-data`. Deserialize its `request` part. `assets` lands in `extra`, and the `asset-N` parts hold the image bytes. A body may be zstd-compressed (`Content-Encoding: zstd`).
+- A question becomes `Question::Noul`, `Choice`, `Score`, or `Box` only when that variant serializes back to the same bytes, key order included. Anything else, such as an unknown type, an extra key, or `instructions` before `type`, stays `Question::Raw`. Either way it serializes back with the same keys in the same order.
+- Build the reply with `SystemOneResponse::new(model, usage, answers)`. Answers are `Answer::Noul(NoulAnswer::new(p))`, `Answer::Choice(ChoiceAnswer::new(label, confidence, probabilities))`, `Answer::Score(ScoreAnswer::new(score, confidence, legend, probabilities))`, and `Answer::Box(BoxAnswer::new(BoxCoordinates::new(top, bottom, left, right), confidence))`.
+- `Question` and `Answer` are `#[non_exhaustive]`. A `match` on them needs a `_` arm.
 - Serve models with `ListModelsResponse::new([ModelMetadata::new(name, description, release_date)])`. It is the type `client.models()` returns.
 - Response types deserialize with the client's own decoder. `SystemOneResponse`, `ListModelsResponse`, `Answer`, the answer structs, `Usage`, and `ModelMetadata` accept what `Client` accepts and name the same field when they fail. They keep only what the client decodes, so unknown keys, `null` token counts, and answers of unknown type do not survive a round trip. The `wire` module docs list every difference.
 
@@ -185,6 +265,10 @@ To forward a request upstream, pass `request.state`, `request.questions`, and `S
 10. `base_url` is an origin or a path prefix, not the full `/v1/systemone` path. The client appends `/v1/systemone` and `/v1/models`. A prefix such as `…/gateway` is valid. See `custom_base_url_serves_system_one_and_models` in `tests/contract.rs`.
 11. Do not put `?` or `#` in the base URL. The client joins the path with string concatenation, so a query or fragment is not a prefix.
 12. Do not end the base URL with `/v1` or `/v1/`. That joins to `/v1/v1/systemone`.
+13. `Question::noul_bare()` alone is refused. Give the noul instructions, or criteria with at least one meaning.
+14. A `choice` with no labels is refused.
+15. An image in the text but not in `images`, `assets`, or an attachment is not sent. Its reference stays plain text.
+16. Images need `TypeSafe-Danger-Zone-Images: true`. Set it with `ClientBuilder::header`.
 
 ## More reading
 

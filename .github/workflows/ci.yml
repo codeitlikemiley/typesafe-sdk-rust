@@ -45,6 +45,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --features mock
       - run: cargo test --features "mock blocking"
+      - run: cargo test --no-default-features --features "mock blocking"
 
   examples:
     name: build examples

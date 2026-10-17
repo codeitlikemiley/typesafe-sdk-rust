@@ -1,6 +1,6 @@
 # TypeSafe Rust SDK
 
-Rust client for the [TypeSafe AI](https://typesafe.ai) API. It matches the Python `typesafe-sdk` 0.6.0 contract. Callers send named questions and get typed answers.
+Rust client for the [TypeSafe AI](https://typesafe.ai) API. It matches the Python `typesafe-sdk` 0.7.5 contract. Callers send named questions, optionally with images, and get typed answers.
 
 Product overview: [TypeSafe docs](https://docs.typesafe.ai/).
 
@@ -14,7 +14,7 @@ Requires Rust 1.85 or later. Edition 2024.
 
 ```toml
 [dependencies]
-typesafe-sdk = "0.2"
+typesafe-sdk = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde_json = "1"
 ```
@@ -24,10 +24,12 @@ This crate requires `serde_json = "1.0.134"`, a minimum rather than a pin: any 1
 For non-async scripts, enable `blocking`:
 
 ```toml
-typesafe-sdk = { version = "0.2", features = ["blocking"] }
+typesafe-sdk = { version = "0.3", features = ["blocking"] }
 ```
 
-Upgrading from 0.1? See [`CHANGELOG.md`](CHANGELOG.md). 0.2 moves to `reqwest` 0.12 and `http` 1.
+The default `zstd` feature compresses large request bodies. It builds the C zstd library, so it needs a C compiler. To drop it, use `default-features = false`; bodies then go uncompressed.
+
+Upgrading? See [`CHANGELOG.md`](CHANGELOG.md). 0.3 adds images, box questions, and request compression, and refuses a few questions and API keys it used to send. 0.2 moved to `reqwest` 0.12 and `http` 1.
 
 ## Call System One
 
@@ -70,7 +72,7 @@ async fn main() -> Result<(), typesafe_sdk::Error> {
 }
 ```
 
-`state` can be a string, a JSON object, or a JSON array. Questions are noul (yes or no probability), choice (one label), or score (an ordered rubric). Answers use the same names.
+`state` can be a string, a JSON object, or a JSON array. Questions are noul (yes or no probability), choice (one label), score (an ordered rubric), or box (where something is in an image). Answers use the same names.
 
 List models with `client.models().await?`.
 
@@ -98,7 +100,9 @@ let client = Client::builder()
     .build()?;
 ```
 
-The builder is typestated. `build()` exists only after `api_key(...)`, so a missing key is a compile error. `Client::from_env()` still fails at runtime when `TYPESAFE_API_KEY` is unset or blank.
+The builder is typestated. `build()` exists only after `api_key(...)`, so a missing key is a compile error. `Client::from_env()` still fails at runtime when `TYPESAFE_API_KEY` is unset or blank. `build()` trims the key and refuses an empty one or one with anything other than printable ASCII without spaces. The error never contains the key, and `Debug` output shows it, and secret header values, as `***`.
+
+Request bodies of 1024 bytes or more are compressed with zstd and sent with `Content-Encoding: zstd`. Each body is compressed once and reused on retries. `GET /v1/models` has no body. Turn compression off with `.compression(Compression::None)`, for example for a server that does not accept compressed bodies.
 
 ## Your own System One server
 
@@ -120,7 +124,36 @@ The default model name is `jev-latest`. Pass `model` when your server uses a dif
 
 See [`examples/custom_base_url.rs`](examples/custom_base_url.rs). The mock mounts `/v1/systemone` on the wiremock origin. Live mode requires `TYPESAFE_BASE_URL` and does not fall back to `https://api.typesafe.ai`. The live branch calls `.model("jev-latest")`.
 
-Per-call overrides go on `SystemOneOpts` (`model`, `timeout`, `retry`, `extra_headers`, `extra_body`) or `ModelsOpts` (`timeout`, `retry`, `extra_headers`). `extra_body` is a shallow last-write-wins merge over `state`, `model`, and `questions`.
+Per-call overrides go on `SystemOneOpts` (`model`, `timeout`, `retry`, `extra_headers`, `extra_body`, `assets`, `images`) or `ModelsOpts` (`timeout`, `retry`, `extra_headers`). `extra_body` is a shallow last-write-wins merge over `state`, `model`, and `questions`. An `assets` key in `extra_body` replaces the client's own, and the call then sends plain JSON without reading any image.
+
+## Images
+
+Wrap image file bytes or a path in `Image`. Its `Display` is a reference, `<image:` and 32 hex digits and `>`, that you put in any string of `state`, instructions, or criteria. Pass the image in `SystemOneOpts::images` so the call knows it. Or give it a name in `SystemOneOpts::assets` and write that name, such as `<photo>`, instead.
+
+```rust
+use typesafe_sdk::{Client, Image, Question, SystemOneOpts};
+
+let client = Client::builder()
+    .api_key("sk-...")
+    .header("TypeSafe-Danger-Zone-Images", "true")?
+    .build()?;
+let photo = Image::from_path("photos/product.png");
+let response = client
+    .system_one_opts(
+        format!("Listing photo: {photo}"),
+        [("product", Question::box_("The product for sale"))],
+        SystemOneOpts { images: vec![photo], ..SystemOneOpts::default() },
+    )
+    .await?;
+let edges = &response.box_("product")?.box_;
+println!("{} {} {} {}", edges.top, edges.bottom, edges.left, edges.right);
+```
+
+Image support on the API is opt-in. Send `TypeSafe-Danger-Zone-Images: true`, as above. The client does not add it. Images need a vision-language model.
+
+A request with images goes as `multipart/form-data`: the JSON body is the `request` part, with an `assets` object naming each image's part, and the image bytes follow. A file is read on the first request that sends it and kept after that. The SDK only checks that the data is not empty and labels PNG and JPEG by their signature. It sets no size limit. `Image::from_base64` decodes base64 text.
+
+`client.attach_assets([image])` returns a guard. While it lives, any call on that client that contains the image's reference sends the image. `examples/images.rs` runs against the mock.
 
 ## Serve the System One shape
 
@@ -128,7 +161,7 @@ To be the server instead of the caller, use the types in `typesafe_sdk::wire`. T
 
 ## Errors and retries
 
-`Error` is a sum type. HTTP failures are `Error::Api` with a `kind` such as `BadRequest`, `Authentication`, or `RateLimited`. A 200 body that does not match the schema is `ApiErrorKind::ResponseValidation` and names the field path.
+`Error` is a sum type. HTTP failures are `Error::Api` with a `kind` such as `BadRequest`, `Authentication`, or `RateLimited`. A 200 body that does not match the schema is `ApiErrorKind::ResponseValidation` and names the field path. `response.decode_as::<T>()` decodes the raw body into your own `Deserialize` type and fails the same way. A connection error message has the request's credentials masked as `***`.
 
 Default retries: 2 after the first attempt. Statuses 408, 429, and 5xx. Exponential backoff from 0.5s to 5s with 0.25 jitter. A 30s budget. Honor `Retry-After` and `retry-after-ms`.
 
@@ -148,6 +181,7 @@ See [examples/README.md](examples/README.md) for the catalog and doc links.
 ```bash
 cargo test --features mock
 cargo test --features "mock blocking"
+cargo test --no-default-features --features "mock blocking"   # without zstd
 cargo bench --bench client_overhead
 ```
 
@@ -159,11 +193,24 @@ CI runs `cargo fmt --check`, `cargo check`, `cargo clippy`, tests, and example b
 
 ## Python parity
 
-Behavior targets [typesafe-sdk-python](https://github.com/typesafe-ai/typesafe-sdk-python) 0.6.0 and OpenAPI 0.2.0 (`POST /v1/systemone`, `GET /v1/models`). The Rust crate has its own version line (0.2.0 here). It is not a version bump of the Python release.
+Behavior targets [typesafe-sdk-python](https://github.com/typesafe-ai/typesafe-sdk-python) 0.7.5 and its OpenAPI schema (`POST /v1/systemone`, `GET /v1/models`). The Rust crate has its own version line (0.3.0 here). It is not a version bump of the Python release.
 
-Look up one answer with `noul("name")`, `choice("name")`, or `score("name")`. Python's `result.nouls["name"]` maps to that call. Scan mixed types through the public `answers` map. There is no `nouls` dict.
+Look up one answer with `noul("name")`, `choice("name")`, `score("name")`, or `box_("name")`. Python's `result.nouls["name"]` maps to that call. Scan mixed types through the public `answers` map. There is no `nouls` dict. `boxes()` iterates the box answers, like Python's `result.boxes`.
 
 `RetryStatuses::Default` is the Python set `{408, 429, *range(500, 600)}` as a predicate. Pass `RetryStatuses::Custom(set)` to replace it. An empty custom set retries no HTTP status.
+
+The wire matches Python byte for byte where Python pins it: the multipart layout and part names, the order of `assets`, the reference format, the 1024-byte compression threshold, the `Content-Encoding` header, and the validation messages for questions, assets, and API keys.
+
+These differ from Python on purpose.
+
+- An image goes in text by its reference. Rust `serde_json::Value` cannot hold an `Image`, so pass the image in `SystemOneOpts::images`, `SystemOneOpts::assets`, or `attach_assets`. Python can also place the `Image` object itself in the content.
+- No `Image.from_pil`. There is no Pillow. Encode the image yourself and use `Image::from_bytes`.
+- Clones of a `Client` share attached images. A Python client cannot be cloned.
+- `attach_assets` returns a guard that releases the images on drop, instead of a `with` block.
+- `response_model` is `SystemOneResponse::decode_as::<T>()` on the response, not an argument to `system_one`. There is no lifting of answers into fields of a subclass.
+- `TypeSafe-Danger-Zone-Images` is not sent by default, as in Python. Set it with `ClientBuilder::header`.
+- Compression follows the `zstd` Cargo feature, which is on by default, instead of an optional Python extra. Requesting `Compression::Zstd` without the feature fails at `build`.
+- Python 0.7.4 sends NaN and infinities as the strings `"NaN"`, `"Infinity"`, and `"-Infinity"`. Not applicable here: `serde_json::Value` cannot hold them, and `json!(f64::NAN)` is `null`.
 
 These Python pieces stay out of the crate on purpose.
 
@@ -171,3 +218,4 @@ These Python pieces stay out of the crate on purpose.
 - OpenAPI codegen. Two endpoints. Hand-written types plus `tests/contract.rs`.
 - Live API tests in `cargo test`. Point `base_url` at a mock.
 - `httpx.Response`. Use `raw_body()` and `request_id()`. `ApiError` keeps headers.
+- Connection pool settings. `reqwest` already keeps idle connections for 90 seconds, longer than Python's 30.
