@@ -29,7 +29,7 @@ typesafe-sdk = { version = "0.3", features = ["blocking"] }
 
 The default `zstd` feature compresses large request bodies. It builds the C zstd library, so it needs a C compiler. To drop it, use `default-features = false`; bodies then go uncompressed.
 
-Upgrading? See [`CHANGELOG.md`](CHANGELOG.md). 0.3 adds images, box questions, and request compression, and refuses a few questions and API keys it used to send. 0.2 moved to `reqwest` 0.12 and `http` 1.
+Upgrading? See [`CHANGELOG.md`](CHANGELOG.md). 0.3 adds Cloudflare Clef and OpenAI Decisions providers, images, box questions, and request compression, and refuses a few questions and API keys it used to send. 0.2 moved to `reqwest` 0.12 and `http` 1.
 
 ## Call System One
 
@@ -126,6 +126,67 @@ See [`examples/custom_base_url.rs`](examples/custom_base_url.rs). The mock mount
 
 Per-call overrides go on `SystemOneOpts` (`model`, `timeout`, `retry`, `extra_headers`, `extra_body`, `assets`, `images`) or `ModelsOpts` (`timeout`, `retry`, `extra_headers`). `extra_body` is a shallow last-write-wins merge over `state`, `model`, and `questions`. An `assets` key in `extra_body` replaces the client's own, and the call then sends plain JSON without reading any image.
 
+## Providers
+
+One client serves three decision backends. The questions, the answers, and `system_one`/`system_one_opts` are the same on all of them; the client translates the request and the response.
+
+| Provider | Feature | `Provider` value | Key | Default base URL | Default model |
+| --- | --- | --- | --- | --- | --- |
+| TypeSafe System One | always on | `Provider::TypeSafe` (default) | `TYPESAFE_API_KEY` | `https://api.typesafe.ai` | `jev-latest` |
+| Cloudflare Clef | `clef` | `Provider::Clef { account_id }` | `CLOUDFLARE_API_TOKEN` (Workers AI) | `https://api.cloudflare.com/client/v4` | `clef` (or `clef-flash`) |
+| OpenAI Decisions (experimental) | `openai-decisions` | `Provider::OpenAiDecisions` | `OPENAI_API_KEY` | `https://api.openai.com` | `gpt-6-luna` |
+
+```toml
+typesafe-sdk = { version = "0.3", features = ["clef", "openai-decisions"] }
+```
+
+```rust
+use typesafe_sdk::{Client, Provider, Question};
+
+let client = Client::builder()
+    .api_key(std::env::var("CLOUDFLARE_API_TOKEN").unwrap())
+    .provider(Provider::Clef { account_id: std::env::var("CLOUDFLARE_ACCOUNT_ID").unwrap() })
+    .model("clef-flash")
+    .build()?;
+let response = client
+    .system_one("I was charged twice.", [("billing", Question::noul("Is this about billing?"))])
+    .await?;
+println!("{}", response.noul("billing")?.noul);
+```
+
+`Client::from_env()` reads `TYPESAFE_PROVIDER`: `typesafe` (the default when unset), `clef`, or `openai`, in any case. It then reads that provider's key variable from the table. `clef` also needs `CLOUDFLARE_ACCOUNT_ID`. An unknown value, or a provider whose feature is off, is an `Error::Sdk` that names the value or the feature. `TYPESAFE_BASE_URL` and `TYPESAFE_DEFAULT_MODEL` apply to TypeSafe only. `base_url` and `model` on the builder work for every provider, for example to go through a gateway. The blocking builder has the same `provider` method. Key checks and redaction apply to every provider's key.
+
+What goes on the wire:
+
+- Clef posts the System One body unchanged, `model` included, to `{base}/accounts/{account_id}/ai/run/@cf/cloudflare/{model}`. The model is in the path and in the body because Workers AI requires both. The response's `{success, errors, result}` envelope is unwrapped. `success: false`, or any entry in `errors`, is an `Error::Api` whose message is Cloudflare's, such as `No route for that URI (code 7000)`. An HTTP error with that envelope gets the same message. A decode failure names the path under `result.`, such as `result.answers.q.noul`.
+- OpenAI Decisions posts `{model, input, questions: [...]}` to `{base}/v1/decisions`. A noul is a `predicate`. A choice's criteria become `choices: [{value, description}]`, without `description` when it is `None`. A score's criteria become `levels: [{label, description}]` with labels `"0"`, `"1"`, and so on. Answers come back as the usual name-keyed map in question order. A score's `legend` is rebuilt from the criteria sent. The response has no model name or token counts, so `response.model` is the requested model and `usage` is empty.
+- A refusal, which only OpenAI documents, is `Answer::Refusal`. `response.refusals()` lists them, and `response.noul(name)` and the other lookups fail with `The model refused to answer "name"`. `RefusalAnswer::raw` holds the object as received.
+- Request bodies are never zstd-compressed for Clef or OpenAI. Retries, timeouts, and the `x-typesafe-*` headers work as they do for TypeSafe.
+
+| Capability | TypeSafe | Clef | OpenAI Decisions |
+| --- | --- | --- | --- |
+| noul, choice, score | yes | yes | yes (noul as `predicate`) |
+| Box questions | yes | no | no |
+| Images (`images`, `assets`, attached images, `extra_body` `assets`) | yes | no | no |
+| Structured (object or array) state, instructions, criteria | yes | yes | no, strings only |
+| Noul criteria (yes and no meanings) | yes | yes | no |
+| A question without instructions | yes | yes | no |
+| Raw questions | sent as given | sent as given | only a plain noul, choice, or score |
+| Questions per request | no limit in the SDK | 1 to 64 | no limit in the SDK |
+| Question names | any | 1 to 100 of `[A-Za-z0-9_.-]` | any |
+| A choice with one label | yes | no (Workers AI returns 422) | yes |
+| `models()` | yes | no | no |
+| Refusal answers | no | no | yes |
+| zstd request bodies | yes | never | never |
+
+Anything marked no fails with `Error::Unsupported { provider, feature }` before a request is sent, for example `The Clef provider does not support box questions (question "dog").` The client never converts a structured value to text or folds noul criteria into the instructions for you.
+
+The OpenAI provider is experimental. The public guide is its only specification. It has no API reference, and the provider has not been checked against the live API. Error bodies, limits, usage, and whether a choice needs a `description` are unknown. Its shapes may change before the API is generally available.
+
+To run Clef yourself, the Hugging Face model card describes an SGLang server with `POST /v1/systemone` and no Cloudflare envelope. That is plain System One: use `Provider::TypeSafe` with `base_url` pointing at your server, and the model name it serves.
+
+See [`examples/providers.rs`](examples/providers.rs) (`cargo run --example providers --features "mock clef openai-decisions"`).
+
 ## Images
 
 Wrap image file bytes or a path in `Image`. Its `Display` is a reference, `<image:` and 32 hex digits and `>`, that you put in any string of `state`, instructions, or criteria. Pass the image in `SystemOneOpts::images` so the call knows it. Or give it a name in `SystemOneOpts::assets` and write that name, such as `<photo>`, instead.
@@ -161,7 +222,7 @@ To be the server instead of the caller, use the types in `typesafe_sdk::wire`. T
 
 ## Errors and retries
 
-`Error` is a sum type. HTTP failures are `Error::Api` with a `kind` such as `BadRequest`, `Authentication`, or `RateLimited`. A 200 body that does not match the schema is `ApiErrorKind::ResponseValidation` and names the field path. `response.decode_as::<T>()` decodes the raw body into your own `Deserialize` type and fails the same way. A connection error message has the request's credentials masked as `***`.
+`Error` is a sum type and `#[non_exhaustive]`, so a `match` needs a `_` arm. HTTP failures are `Error::Api` with a `kind` such as `BadRequest`, `Authentication`, or `RateLimited`. A request the provider cannot express is `Error::Unsupported`, returned before any request and never retried. A 200 body that does not match the schema is `ApiErrorKind::ResponseValidation` and names the field path. `response.decode_as::<T>()` decodes the raw body into your own `Deserialize` type and fails the same way. A connection error message has the request's credentials masked as `***`.
 
 Default retries: 2 after the first attempt. Statuses 408, 429, and 5xx. Exponential backoff from 0.5s to 5s with 0.25 jitter. A 30s budget. Honor `Retry-After` and `retry-after-ms`.
 
@@ -182,6 +243,7 @@ See [examples/README.md](examples/README.md) for the catalog and doc links.
 cargo test --features mock
 cargo test --features "mock blocking"
 cargo test --no-default-features --features "mock blocking"   # without zstd
+cargo test --features "mock blocking clef openai-decisions"    # all providers
 cargo bench --bench client_overhead
 ```
 
@@ -204,6 +266,7 @@ The wire matches Python byte for byte where Python pins it: the multipart layout
 These differ from Python on purpose.
 
 - An image goes in text by its reference. Rust `serde_json::Value` cannot hold an `Image`, so pass the image in `SystemOneOpts::images`, `SystemOneOpts::assets`, or `attach_assets`. Python can also place the `Image` object itself in the content.
+- Providers are Rust only. The Python SDK talks to TypeSafe alone; `Provider::Clef` and `Provider::OpenAiDecisions` have no Python counterpart.
 - No `Image.from_pil`. There is no Pillow. Encode the image yourself and use `Image::from_bytes`.
 - Clones of a `Client` share attached images. A Python client cannot be cloned.
 - `attach_assets` returns a guard that releases the images on drop, instead of a `with` block.
