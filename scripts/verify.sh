@@ -8,6 +8,7 @@ cargo clippy --all-targets --features mock -- -D warnings
 cargo clippy --all-targets --features "mock blocking" -- -D warnings
 cargo test --features mock
 cargo test --features "mock blocking"
+cargo test --no-default-features --features "mock blocking"
 cargo build --examples --features mock
 cargo build --example blocking_triage --features "mock blocking"
 echo "typesafe-sdk verify passed"

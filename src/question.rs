@@ -52,18 +52,27 @@ impl NoulCriteria {
 ///
 /// Serializes to the wire object `{"type": ..., "instructions": ..., "criteria": ...}`.
 /// Deserializing accepts exactly the objects the client would send: a nonempty
-/// string `type`, `criteria` on `choice` and `score`, and at least one score. An
-/// object becomes `Noul`, `Choice`, or `Score` only when that variant serializes
-/// back to the same keys and values in the same order. Typed variants write
-/// `type`, `instructions`, `criteria`, and noul criteria `true` before `false`.
-/// Anything else, such as an unknown `type`, an extra key, or `instructions`
-/// before `type`, stays `Raw`. Either way, a deserialized question serializes
-/// back to the same keys and values in the same order.
+/// string `type`; nonempty `criteria` on `choice` and `score`; and on `noul`,
+/// `criteria` that is an object if present, and `instructions` or at least one
+/// non-null meaning. An object becomes `Noul`, `Choice`, `Score`, or `Box` only
+/// when that variant serializes back to the same keys and values in the same
+/// order. Typed variants write `type`, `instructions`, `criteria`, and noul
+/// criteria `true` before `false`. Anything else, such as an unknown `type`, an
+/// extra key, or `instructions` before `type`, stays `Raw`. Either way, a
+/// deserialized question serializes back to the same keys and values in the
+/// same order.
+///
+/// Image references, the text [`Image::reference`](crate::Image::reference)
+/// returns, may go in any string of `instructions` or `criteria`.
+#[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub enum Question {
     /// Yes/no question. `instructions` asks the question, `criteria` optionally defines yes/no meanings.
+    ///
+    /// Needs `instructions` or at least one meaning in `criteria`. The client
+    /// refuses to send it otherwise.
     Noul {
-        /// Question text. `None` sends a bare noul with no instructions.
+        /// Question text. `None` sends no instructions, which needs a meaning in `criteria`.
         instructions: Option<JsonContent>,
         /// Optional yes/no meanings. `None` omits criteria from the wire.
         criteria: Option<NoulCriteria>,
@@ -72,7 +81,7 @@ pub enum Question {
     Choice {
         /// Question text.
         instructions: Option<JsonContent>,
-        /// Map from label to its description. `None` sends a null description.
+        /// Map from label to its description. `None` sends a null description. Must be nonempty.
         criteria: IndexMap<String, Option<JsonContent>>,
     },
     /// Ordered-rubric question. `criteria` holds the rubric entries in score order.
@@ -81,6 +90,15 @@ pub enum Question {
         instructions: Option<JsonContent>,
         /// Rubric entries in score order. Must be nonempty.
         criteria: Vec<JsonContent>,
+    },
+    /// Locate something in an image. The answer is an [`Answer::Box`](crate::Answer::Box).
+    ///
+    /// Serializes to `{"type":"box"}`, with `instructions` after `type` when
+    /// set. The request must contain an image and use a vision-language model;
+    /// the client does not check either.
+    Box {
+        /// What to locate in the image. `None` leaves `instructions` out.
+        instructions: Option<JsonContent>,
     },
     /// Pass-through question map sent as-is after `type` validation.
     Raw(Map<String, Value>),
@@ -96,6 +114,9 @@ impl Question {
     }
 
     /// Builds a noul question with no instructions and no criteria.
+    ///
+    /// Attach criteria with at least one meaning through `with_noul_criteria`
+    /// before sending. A noul with neither is refused, as in the Python SDK.
     pub fn noul_bare() -> Self {
         Self::Noul {
             instructions: None,
@@ -114,7 +135,7 @@ impl Question {
         }
     }
 
-    /// Builds a choice question with instructions and label-to-description criteria.
+    /// Builds a choice question with instructions and label-to-description criteria. Errors at send time when empty.
     pub fn choice(
         instructions: impl Into<JsonContent>,
         criteria: impl IntoIterator<Item = (impl Into<String>, Option<JsonContent>)>,
@@ -139,6 +160,18 @@ impl Question {
         }
     }
 
+    /// Builds a box question that locates what `instructions` describes in an image.
+    pub fn box_(instructions: impl Into<JsonContent>) -> Self {
+        Self::Box {
+            instructions: Some(instructions.into()),
+        }
+    }
+
+    /// Builds a box question with no instructions: `{"type":"box"}`.
+    pub fn box_bare() -> Self {
+        Self::Box { instructions: None }
+    }
+
     /// Builds a pass-through question from a raw map. Validated at send time.
     pub fn raw(value: Map<String, Value>) -> Self {
         Self::Raw(value)
@@ -158,6 +191,16 @@ impl Question {
     pub(crate) fn validate(&self, name: &str) -> Result<(), Error> {
         let invalid = match self {
             Self::Score { criteria, .. } if criteria.is_empty() => Some(Invalid::NoScores),
+            Self::Choice { criteria, .. } if criteria.is_empty() => Some(Invalid::NoChoices),
+            Self::Noul {
+                instructions: None,
+                criteria,
+            } if criteria.as_ref().is_none_or(|criteria| {
+                criteria.true_meaning.is_none() && criteria.false_meaning.is_none()
+            }) =>
+            {
+                Some(Invalid::NoulEmpty)
+            }
             Self::Raw(map) => check_raw(map).err(),
             _ => None,
         };
@@ -225,6 +268,17 @@ impl Question {
                     "criteria".to_string(),
                     Value::Array(criteria.iter().cloned().map(Value::from).collect()),
                 );
+                Ok(Value::Object(map))
+            }
+            Self::Box { instructions } => {
+                let mut map = Map::new();
+                map.insert("type".to_string(), Value::String("box".to_string()));
+                if let Some(instructions) = instructions {
+                    map.insert(
+                        "instructions".to_string(),
+                        Value::from(instructions.clone()),
+                    );
+                }
                 Ok(Value::Object(map))
             }
             Self::Raw(map) => Ok(Value::Object(map.clone())),
@@ -322,6 +376,7 @@ fn typed(map: &Map<String, Value>) -> Option<Question> {
                 criteria,
             }
         }
+        "box" if criteria.is_none() => Question::Box { instructions },
         _ => return None,
     };
     // Holding the same keys and values is not enough: `instructions` before
@@ -383,6 +438,12 @@ enum Invalid {
     Criteria,
     /// A `score` question has no scores.
     NoScores,
+    /// A `choice` question has no choices.
+    NoChoices,
+    /// A `noul` question's `criteria` is not an object.
+    NoulCriteriaType,
+    /// A `noul` question has neither instructions nor a described outcome.
+    NoulEmpty,
 }
 
 impl Invalid {
@@ -396,6 +457,13 @@ impl Invalid {
             Self::NoScores => {
                 format!("Score question{name} has no criteria; at least one score is required.")
             }
+            Self::NoChoices => {
+                format!("Choice question{name} has no criteria; at least one choice is required.")
+            }
+            Self::NoulCriteriaType => format!("Noul question{name} criteria must be an object."),
+            Self::NoulEmpty => format!(
+                "Noul question{name} has neither instructions nor criteria; at least one is required."
+            ),
         }
     }
 }
@@ -408,12 +476,39 @@ fn check_raw(map: &Map<String, Value>) -> Result<(), Invalid> {
     if matches!(type_name, "choice" | "score") && !map.contains_key("criteria") {
         return Err(Invalid::Criteria);
     }
-    if type_name == "score"
-        && matches!(map.get("criteria"), Some(Value::Array(items)) if items.is_empty())
-    {
-        return Err(Invalid::NoScores);
+    let criteria = map.get("criteria").unwrap_or(&Value::Null);
+    match type_name {
+        "score" if falsy(criteria) => Err(Invalid::NoScores),
+        "choice" if falsy(criteria) => Err(Invalid::NoChoices),
+        "noul" => {
+            let meanings = match criteria {
+                Value::Null => None,
+                Value::Object(meanings) => Some(meanings),
+                _ => return Err(Invalid::NoulCriteriaType),
+            };
+            let instructions = map.get("instructions").unwrap_or(&Value::Null);
+            let described =
+                meanings.is_some_and(|meanings| meanings.values().any(|v| !v.is_null()));
+            if instructions.is_null() && !described {
+                return Err(Invalid::NoulEmpty);
+            }
+            Ok(())
+        }
+        _ => Ok(()),
     }
-    Ok(())
+}
+
+/// Whether Python treats the decoded JSON value as false: `null`, `false`, `0`,
+/// `""`, `[]`, or `{}`.
+fn falsy(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::Bool(flag) => !flag,
+        Value::Number(number) => number.as_f64() == Some(0.0),
+        Value::String(text) => text.is_empty(),
+        Value::Array(items) => items.is_empty(),
+        Value::Object(map) => map.is_empty(),
+    }
 }
 
 #[cfg(test)]
@@ -422,8 +517,14 @@ mod tests {
 
     #[test]
     fn typed_questions_omit_default_fields() {
-        let noul = Question::noul_bare().to_wire("q").unwrap();
-        assert_eq!(noul, serde_json::json!({"type": "noul"}));
+        let noul = Question::noul_bare()
+            .with_noul_criteria(NoulCriteria::new().no("x"))
+            .to_wire("q")
+            .unwrap();
+        assert_eq!(
+            noul,
+            serde_json::json!({"type": "noul", "criteria": {"false": "x"}})
+        );
         let choice = Question::choice("Tone?", [("calm", None)])
             .to_wire("q")
             .unwrap();

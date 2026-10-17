@@ -1,6 +1,44 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.3.0 (unreleased)
+
+Parity with Python `typesafe-sdk` 0.7.5: image assets, box questions, zstd request compression, the request and API key checks of 0.7.1 and 0.7.3, and a typed decode of the raw response for 0.7.0's `response_model`.
+
+### Breaking
+
+- `Question` and `Answer` are `#[non_exhaustive]` and have a new `Box` variant. A `match` on either needs a `_` arm.
+- The client refuses, before any request, a noul with neither instructions nor a non-null meaning, such as `Question::noul_bare()` alone or `{"type":"noul"}`; a raw noul whose `criteria` is not an object; and a choice with no labels. `SystemOneRequest` deserialize refuses the same. The messages are Python's, such as `Noul question "q" has neither instructions nor criteria; at least one is required.`
+- A raw `choice` or `score` whose `criteria` is `null`, `false`, `0`, `""`, `[]`, or `{}` is refused, as in Python. 0.2 refused only an empty score array.
+- `build` trims the API key and refuses a key that is empty after trimming, or that has whitespace, control characters, or non-ASCII characters inside it: `API key must contain only printable ASCII characters without whitespace.` 0.2 sent such a key and failed later with `invalid header value`. This applies to `ClientBuilder::build`, `Client::from_env`, `Client::new`, and the blocking builder.
+- With the default features, request bodies of 1024 bytes or more go zstd-compressed with `Content-Encoding: zstd`, as Python does by default. A server that does not accept that needs `.compression(Compression::None)` on the builder, or the crate with `default-features = false`.
+- `SystemOneOpts` has the new public fields `assets` and `images`. A struct literal without `..SystemOneOpts::default()` no longer compiles.
+
+### Changed
+
+- `Debug` for `Client`, `ClientBuilder`, `SystemOneOpts`, and `ModelsOpts` shows the API key and the values of secret headers (`authorization`, `x-api-key`, cookies, and any name containing `token` or `secret`) as `***`. 0.2 derived `Debug` and printed the key.
+- An `Error::Connection` message has the request's credentials replaced with `***`: secret header values, the token after `Bearer`, and their escaped forms.
+- `SystemOneRequest` docs and the `wire` module docs list the new checks and describe a multipart image request.
+
+### Added
+
+- `Image`: an image from `Image::from_bytes`, `Image::from_path`, or `Image::from_base64`. Its `Display` and `reference()` give `<image:{32 lowercase hex}>`. Clones are the same asset; two images from the same bytes are not. A path is read on the first request that sends it and kept. PNG and JPEG are labeled by signature, anything else is `application/octet-stream`. There is no size limit and no Pillow support.
+- `SystemOneOpts::assets` (alias to image, all sent) and `SystemOneOpts::images` (sent when their reference appears). A request with images is `multipart/form-data`, byte for byte as Python writes it: the JSON as the `request` part with an `assets` object last, then one `asset-N` part per key. Aliases come first in order, then references in order of first appearance. An `assets` key in `extra_body` sends plain JSON without reading any image. Errors name the alias, with Python's messages.
+- `Client::attach_assets` and `blocking::Client::attach_assets` return an `AttachGuard`. Attached images are sent by any call on that client, and on its clones, that references them. Holds are counted and released on drop.
+- `Question::Box`, `Question::box_`, `Question::box_bare`. `Answer::Box`, `BoxAnswer`, `BoxCoordinates`, `Answer::as_box`, `SystemOneResponse::box_`, and `SystemOneResponse::boxes`. A box answer's `confidence` key is required and may be `null`. All are in `wire` and at the crate root.
+- `Compression` (`Zstd`, `None`), `ClientBuilder::compression`, and `blocking::Builder::compression`. The `zstd` feature, on by default, adds the `zstd` 0.13 dependency, which builds the C library. The body is compressed once and reused on every retry. `Compression::Zstd` without the feature fails at `build`.
+- `SystemOneResponse::decode_as::<T>()` decodes the raw body into your own type. A failure is `ApiErrorKind::ResponseValidation` with the failing field path, such as `answers.spam.noul`.
+- `examples/images.rs`, run against the mock in `tests/examples_integration.rs`.
+- New dependencies: `base64` 0.22, `serde_path_to_error` 0.1, optional `zstd` 0.13, and `tokio`'s `fs` feature.
+
+### Fixed
+
+- The 0.2.0 heading of this changelog said "unreleased". 0.2.0 is on crates.io.
+
+### MSRV
+
+Still Rust 1.85. The new dependencies build on 1.85.0. The 0.2.0 notes on `yoke-derive` and `wiremock` still apply.
+
+## 0.2.0
 
 The types the client sends and decodes now serve the System One shape in both directions. The HTTP stack moves to `reqwest` 0.12 and `http` 1, so a caller on that stack can share its client instead of building a second one.
 

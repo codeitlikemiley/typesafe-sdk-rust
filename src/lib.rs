@@ -47,12 +47,14 @@
 //! ```
 
 mod answer;
+mod asset;
 mod client;
 mod config;
 mod constants;
 mod error;
 mod json;
 mod logging;
+mod multipart;
 mod question;
 mod request;
 mod retry;
@@ -63,12 +65,14 @@ pub mod blocking;
 pub mod wire;
 
 pub use answer::{
-    Answer, ChoiceAnswer, ListModelsResponse, ModelMetadata, NoulAnswer, ScoreAnswer,
-    SystemOneResponse, Usage,
+    Answer, BoxAnswer, BoxCoordinates, ChoiceAnswer, ListModelsResponse, ModelMetadata, NoulAnswer,
+    ScoreAnswer, SystemOneResponse, Usage,
 };
+pub use asset::{AttachGuard, Image};
 pub use client::{
     ApiKeySet, Client, ClientBuilder, ModelsOpts, NoApiKey, SystemOneOpts, questions,
 };
+pub use config::Compression;
 pub use wire::SystemOneRequest;
 
 /// Python SDK name. Same type as [`Client`].

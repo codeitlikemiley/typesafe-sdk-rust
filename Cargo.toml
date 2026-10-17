@@ -1,6 +1,6 @@
 [package]
 name = "typesafe-sdk"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
@@ -17,11 +17,13 @@ name = "blocking_triage"
 required-features = ["blocking"]
 
 [features]
-default = []
+default = ["zstd"]
 blocking = ["tokio/rt", "tokio/net"]
 mock = ["dep:wiremock"]
+zstd = ["dep:zstd"]
 
 [dependencies]
+base64 = "0.22"
 bytes = "1"
 encoding_rs = "0.8.35"
 fastrand = "2"
@@ -34,11 +36,14 @@ log = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2", "system-proxy", "charset"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1.0.134", features = ["preserve_order"] }
-tokio = { version = "1", default-features = false, features = ["time"] }
+serde_path_to_error = "0.1"
+tokio = { version = "1", default-features = false, features = ["fs", "time"] }
 url = "2.5.4"
 wiremock = { version = "0.6", optional = true }
+zstd = { version = "0.13", optional = true, default-features = false }
 
 [dev-dependencies]
+zstd = { version = "0.13", default-features = false }
 criterion = { version = "0.5", features = ["async_tokio"] }
 serde_json = { version = "1.0.134", features = ["preserve_order"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

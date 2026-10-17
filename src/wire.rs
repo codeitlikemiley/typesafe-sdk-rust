@@ -12,11 +12,21 @@
 //! not a string, object, or array; a `model` that is neither a string nor
 //! `null`; an empty `questions` object; a question that is not an object with a
 //! nonempty string `type`; a `choice` or `score` question without `criteria`;
-//! and a `score` question whose `criteria` is an empty array. The client runs
-//! the same checks before it sends, except on a field that
+//! a `choice` or `score` question whose `criteria` is empty, `null`, or another
+//! value Python reads as false; a `noul` question whose `criteria` is present
+//! and not an object or `null`; and a `noul` question with neither
+//! `instructions` nor a non-null meaning in `criteria`. A `null` `instructions`
+//! counts as none, an empty string as some. The client runs the same checks
+//! before it sends, except on a field that
 //! [`SystemOneOpts::extra_body`](crate::SystemOneOpts::extra_body) replaces.
 //! Unknown top-level keys stay in [`SystemOneRequest::extra`], and a question of
 //! unknown `type` stays [`Question::Raw`].
+//!
+//! A request that sends images arrives as `multipart/form-data`. Deserialize
+//! its first part, named `request`. Its `assets` object, which maps each
+//! placeholder to `{"type":"image","part":"asset-N"}`, stays in
+//! [`SystemOneRequest::extra`], and each `asset-N` part holds an image's bytes.
+//! A request body may also arrive zstd-compressed with `Content-Encoding: zstd`.
 //!
 //! The response types, from [`SystemOneResponse`] and [`ListModelsResponse`]
 //! down to [`Usage`] and each answer, deserialize with the decoder the client
@@ -72,8 +82,9 @@
 //!   - A `null` token count is left out, and a missing `usage` or `answers` is
 //!     written as `{}`.
 //!   - An answer of unknown `type` is dropped.
-//!   - `noul`, `score`, `confidence`, and the probabilities are `f64`, so `1` is
-//!     written as `1.0`.
+//!   - `noul`, `score`, `confidence`, the probabilities, and box edges are
+//!     `f64`, so `1` is written as `1.0`.
+//!   - A box answer's `confidence` is always written, as `null` when `None`.
 //!   - Score indexes are `u32`, so a key such as `"01"` is written as `"1"`,
 //!     and two keys for one index merge. Their order is kept.
 //!   - A token count above `i64::MAX` wraps to a negative number, as it always
@@ -85,8 +96,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
 pub use crate::answer::{
-    Answer, ChoiceAnswer, ListModelsResponse, ModelMetadata, NoulAnswer, ScoreAnswer,
-    SystemOneResponse, Usage,
+    Answer, BoxAnswer, BoxCoordinates, ChoiceAnswer, ListModelsResponse, ModelMetadata, NoulAnswer,
+    ScoreAnswer, SystemOneResponse, Usage,
 };
 pub use crate::constants::{MODELS_PATH, SYSTEM_ONE_PATH};
 pub use crate::json::JsonContent;
