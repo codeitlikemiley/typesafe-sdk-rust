@@ -28,6 +28,7 @@ CI runs the same fixtures in `tests/examples_integration.rs` via `cargo test --f
 | `noul_uncertainty` | [Self-consistency nouls](https://docs.typesafe.ai/cookbooks/consistency_noul_cookbook.md) |
 | `images` | Image assets and a box question. Live mode needs a real photo in `TYPESAFE_EXAMPLE_IMAGE`; the API rejects very small images. |
 | `blocking_triage` | Blocking client on live API; mock path uses async client against wiremock (`--features "mock blocking"`) |
+| `providers` | The same questions on TypeSafe, Cloudflare Clef, and OpenAI Decisions (experimental). Needs `--features "mock clef openai-decisions"`. Live mode uses `Client::from_env()`, so set `TYPESAFE_PROVIDER` and that provider's key. |
 | `custom_base_url` | Non-default base URL for `POST /v1/systemone` and `GET /v1/models`. Mock mounts `/v1/…` on the wiremock origin. Live requires `TYPESAFE_BASE_URL` and does not fall back to `https://api.typesafe.ai`. |
 
 ## Build all mocks locally
@@ -39,4 +40,5 @@ for ex in system_one fan_out confidence_routing guardrails citation_check \
   cargo run --example "$ex" --features mock
 done
 cargo run --example blocking_triage --features "mock blocking"
+cargo run --example providers --features "mock clef openai-decisions"
 ```

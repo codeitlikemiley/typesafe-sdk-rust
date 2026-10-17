@@ -22,7 +22,8 @@ impl Client {
         }
     }
 
-    /// Builds a blocking `Client` from the environment. Errors when `TYPESAFE_API_KEY` is unset or blank.
+    /// Builds a blocking `Client` from the environment, reading the same
+    /// variables as [`crate::Client::from_env`], `TYPESAFE_PROVIDER` included.
     pub fn from_env() -> Result<Self, Error> {
         let inner = crate::Client::from_env()?;
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -121,7 +122,14 @@ impl Builder<ApiKeySet> {
 }
 
 impl<S> Builder<S> {
-    /// Sets the default model, overriding `TYPESAFE_DEFAULT_MODEL` and `jev-latest`.
+    /// Sets the decision backend. See [`crate::ClientBuilder::provider`].
+    pub fn provider(mut self, provider: crate::Provider) -> Self {
+        self.inner = self.inner.provider(provider);
+        self
+    }
+
+    /// Sets the default model, overriding `TYPESAFE_DEFAULT_MODEL` and the
+    /// provider's default, `jev-latest` for TypeSafe.
     pub fn model(mut self, model: impl Into<String>) -> Self {
         self.inner = self.inner.model(model);
         self
@@ -151,7 +159,8 @@ impl<S> Builder<S> {
         self
     }
 
-    /// Sets the base URL, overriding `TYPESAFE_BASE_URL` and `https://api.typesafe.ai`.
+    /// Sets the base URL, overriding `TYPESAFE_BASE_URL` and the provider's
+    /// default, `https://api.typesafe.ai` for TypeSafe.
     pub fn base_url(mut self, base_url: impl Into<String>) -> Self {
         self.inner = self.inner.base_url(base_url);
         self

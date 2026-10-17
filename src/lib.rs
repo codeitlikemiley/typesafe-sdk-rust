@@ -9,6 +9,10 @@
 //! To serve the same contract instead of calling it, use the request and
 //! response types in [`wire`]. They serialize and deserialize the wire JSON.
 //!
+//! The same client also talks to Cloudflare Clef (feature `clef`) and OpenAI
+//! Decisions (feature `openai-decisions`, experimental). Pick one with
+//! [`ClientBuilder::provider`] or `TYPESAFE_PROVIDER`. See [`Provider`].
+//!
 //! # Example
 //!
 //! ```rust,ignore
@@ -55,6 +59,7 @@ mod error;
 mod json;
 mod logging;
 mod multipart;
+mod provider;
 mod question;
 mod request;
 mod retry;
@@ -66,7 +71,7 @@ pub mod wire;
 
 pub use answer::{
     Answer, BoxAnswer, BoxCoordinates, ChoiceAnswer, ListModelsResponse, ModelMetadata, NoulAnswer,
-    ScoreAnswer, SystemOneResponse, Usage,
+    RefusalAnswer, ScoreAnswer, SystemOneResponse, Usage,
 };
 pub use asset::{AttachGuard, Image};
 pub use client::{
@@ -79,10 +84,19 @@ pub use wire::SystemOneRequest;
 pub type TypeSafeClient = Client;
 pub use constants::{
     API_KEY_ENV, BASE_URL_ENV, DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_MODEL_ENV,
-    DEFAULT_TIMEOUT_SECS, LOG_LEVEL_ENV,
+    DEFAULT_TIMEOUT_SECS, LOG_LEVEL_ENV, PROVIDER_ENV,
+};
+#[cfg(feature = "clef")]
+pub use constants::{
+    CLEF_DEFAULT_BASE_URL, CLEF_DEFAULT_MODEL, CLOUDFLARE_ACCOUNT_ID_ENV, CLOUDFLARE_API_TOKEN_ENV,
+};
+#[cfg(feature = "openai-decisions")]
+pub use constants::{
+    OPENAI_API_KEY_ENV, OPENAI_DECISIONS_PATH, OPENAI_DEFAULT_BASE_URL, OPENAI_DEFAULT_MODEL,
 };
 pub use error::{ApiError, ApiErrorKind, Error, ErrorBody};
 pub use json::{IntoState, JsonContent};
+pub use provider::Provider;
 pub use question::{NoulCriteria, Question};
 pub use retry::{RetryPolicy, RetryStatuses};
 

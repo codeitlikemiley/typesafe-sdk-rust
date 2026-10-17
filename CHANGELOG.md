@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.3.0 (unreleased)
+## 0.3.0 (2026-10-17)
 
-Parity with Python `typesafe-sdk` 0.7.5: image assets, box questions, zstd request compression, the request and API key checks of 0.7.1 and 0.7.3, and a typed decode of the raw response for 0.7.0's `response_model`.
+Parity with Python `typesafe-sdk` 0.7.5: image assets, box questions, zstd request compression, the request and API key checks of 0.7.1 and 0.7.3, and a typed decode of the raw response for 0.7.0's `response_model`. Also two more decision backends behind cargo features: Cloudflare Clef and OpenAI Decisions (experimental).
 
 ### Breaking
 
@@ -12,12 +12,15 @@ Parity with Python `typesafe-sdk` 0.7.5: image assets, box questions, zstd reque
 - `build` trims the API key and refuses a key that is empty after trimming, or that has whitespace, control characters, or non-ASCII characters inside it: `API key must contain only printable ASCII characters without whitespace.` 0.2 sent such a key and failed later with `invalid header value`. This applies to `ClientBuilder::build`, `Client::from_env`, `Client::new`, and the blocking builder.
 - With the default features, request bodies of 1024 bytes or more go zstd-compressed with `Content-Encoding: zstd`, as Python does by default. A server that does not accept that needs `.compression(Compression::None)` on the builder, or the crate with `default-features = false`.
 - `SystemOneOpts` has the new public fields `assets` and `images`. A struct literal without `..SystemOneOpts::default()` no longer compiles.
+- `Error` is `#[non_exhaustive]` and has a new `Unsupported` variant. A `match` on it needs a `_` arm.
 
 ### Changed
 
 - `Debug` for `Client`, `ClientBuilder`, `SystemOneOpts`, and `ModelsOpts` shows the API key and the values of secret headers (`authorization`, `x-api-key`, cookies, and any name containing `token` or `secret`) as `***`. 0.2 derived `Debug` and printed the key.
 - An `Error::Connection` message has the request's credentials replaced with `***`: secret header values, the token after `Bearer`, and their escaped forms.
 - `SystemOneRequest` docs and the `wire` module docs list the new checks and describe a multipart image request.
+- A System One answer of type `refusal` decodes as `Answer::Refusal` instead of being skipped.
+- `Client::from_env` reads `TYPESAFE_PROVIDER` first. Unset or `typesafe` behaves as before. The missing-key message names the selected provider's variable.
 
 ### Added
 
@@ -29,16 +32,25 @@ Parity with Python `typesafe-sdk` 0.7.5: image assets, box questions, zstd reque
 - `SystemOneResponse::decode_as::<T>()` decodes the raw body into your own type. A failure is `ApiErrorKind::ResponseValidation` with the failing field path, such as `answers.spam.noul`.
 - `examples/images.rs`, run against the mock in `tests/examples_integration.rs`.
 - New dependencies: `base64` 0.22, `serde_path_to_error` 0.1, optional `zstd` 0.13, and `tokio`'s `fs` feature.
+- `Provider` (`#[non_exhaustive]`): `TypeSafe` (default), `Clef { account_id }` with the `clef` feature, and `OpenAiDecisions` with the `openai-decisions` feature. Neither feature is on by default. `ClientBuilder::provider` and `blocking::Builder::provider` set it. `system_one`, `system_one_opts`, `Question`, `Answer`, and `SystemOneResponse` stay the one API; each provider translates the request and response internally. `wire` stays System One.
+- Clef posts the System One body, `model` included, to `{base}/accounts/{account_id}/ai/run/@cf/cloudflare/{model}`, with `https://api.cloudflare.com/client/v4` and `clef` as defaults. It unwraps the `{success, errors, result}` envelope. `success: false` or a nonempty `errors` is an `Error::Api` with Cloudflare's messages, and so is an HTTP error with that envelope. A decode failure names the path under `result.`.
+- OpenAI Decisions, experimental and built from the public guide only, posts `{model, input, questions: [...]}` to `{base}/v1/decisions`, with `https://api.openai.com` and `gpt-6-luna` as defaults. Noul goes as `predicate`, choice criteria as `choices`, score criteria as `levels` labeled by index. The answers array decodes into the name-keyed map in question order, and a score's `legend` comes from the criteria sent. `model` is the requested one and `usage` is empty unless the response has them.
+- `Error::Unsupported { provider, feature }`, returned before any request and never retried, for: box questions, images, and `models()` on Clef and OpenAI; more than 64 questions, names outside `[A-Za-z0-9_.-]{1,100}`, and one-label choices on Clef; on OpenAI, state, instructions, or criteria descriptions that are not strings, noul criteria, questions without instructions, and raw questions that are not a plain noul, choice, or score.
+- `Answer::Refusal(RefusalAnswer)`, `Answer::as_refusal`, and `SystemOneResponse::refusals`. `RefusalAnswer::raw` keeps the object as received. `noul`, `choice`, `score`, and `box_` on a refused name fail with `The model refused to answer "name", so there is no noul answer.` `RefusalAnswer` is in `wire` and at the crate root.
+- `TYPESAFE_PROVIDER` (`typesafe`, `clef`, `openai`), `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and `OPENAI_API_KEY` for `Client::from_env`. An unknown value, or one whose feature is off, is an error naming it. `TYPESAFE_BASE_URL` and `TYPESAFE_DEFAULT_MODEL` stay TypeSafe-only. Constants `PROVIDER_ENV`, and with their features `CLOUDFLARE_API_TOKEN_ENV`, `CLOUDFLARE_ACCOUNT_ID_ENV`, `CLEF_DEFAULT_BASE_URL`, `CLEF_DEFAULT_MODEL`, `OPENAI_API_KEY_ENV`, `OPENAI_DEFAULT_BASE_URL`, `OPENAI_DEFAULT_MODEL`, and `OPENAI_DECISIONS_PATH`.
+- Clef and OpenAI request bodies are never zstd-compressed. Retries, timeouts, request IDs, and key checks and redaction work as for TypeSafe.
+- `examples/providers.rs`, run against the mock in `tests/examples_integration.rs`, and provider contract tests in `tests/providers.rs`. CI and `scripts/verify.sh` run clippy and tests with `--features "mock blocking clef openai-decisions"`.
 
 ### Fixed
 
 - The 0.2.0 heading of this changelog said "unreleased". 0.2.0 is on crates.io.
+- The `endpoint` of an `ApiError` dropped everything before an `@` anywhere in the URL, taking it for userinfo. It now looks for userinfo in the authority only, so a path such as `/ai/run/@cf/cloudflare/clef` is kept.
 
 ### MSRV
 
-Still Rust 1.85. The new dependencies build on 1.85.0. The 0.2.0 notes on `yoke-derive` and `wiremock` still apply.
+Still Rust 1.85. The new dependencies build on 1.85.0. The lockfile moves `yoke-derive` from 0.8.3, which is yanked and needs 1.87, to 0.8.4, which builds on 1.85, so the library with every feature except `mock` needs no pin on 1.85. The 0.2.0 note on `wiremock` still applies to `mock` and the tests.
 
-## 0.2.0
+## 0.2.0 (2026-09-29)
 
 The types the client sends and decodes now serve the System One shape in both directions. The HTTP stack moves to `reqwest` 0.12 and `http` 1, so a caller on that stack can share its client instead of building a second one.
 

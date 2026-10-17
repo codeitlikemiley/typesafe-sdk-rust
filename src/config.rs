@@ -2,12 +2,10 @@ use std::time::Duration;
 
 use http::HeaderMap;
 
-use crate::constants::{
-    API_KEY_ENV, BASE_URL_ENV, DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_MODEL_ENV,
-    DEFAULT_TIMEOUT_SECS,
-};
+use crate::constants::{BASE_URL_ENV, DEFAULT_MODEL_ENV, DEFAULT_TIMEOUT_SECS};
 use crate::error::Error;
 use crate::logging::RedactedHeaders;
+use crate::provider::Provider;
 
 /// How the client compresses request bodies.
 ///
@@ -27,6 +25,7 @@ pub enum Compression {
 
 #[derive(Clone)]
 pub(crate) struct Config {
+    pub provider: Provider,
     pub api_key: String,
     pub base_url: String,
     pub default_model: String,
@@ -38,6 +37,7 @@ pub(crate) struct Config {
 impl std::fmt::Debug for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Config")
+            .field("provider", &self.provider)
             .field("api_key", &"***")
             .field("base_url", &self.base_url)
             .field("default_model", &self.default_model)
@@ -49,26 +49,43 @@ impl std::fmt::Debug for Config {
 }
 
 impl Config {
+    /// `TYPESAFE_BASE_URL` and `TYPESAFE_DEFAULT_MODEL` apply to the TypeSafe
+    /// provider only. Other providers use their own defaults, and never
+    /// compress request bodies.
+    #[allow(clippy::too_many_arguments)]
     pub fn resolve(
         api_key: &str,
+        provider: Provider,
         base_url: Option<String>,
         default_model: Option<String>,
         timeout: Option<Duration>,
         default_headers: HeaderMap,
         compression: Option<Compression>,
     ) -> Result<Self, Error> {
-        let api_key = validate_api_key(api_key)?;
+        let api_key = validate_api_key(api_key, provider.key_env())?;
+        let provider = provider.validated()?;
+        let typesafe = provider == Provider::TypeSafe;
+        let resolve = |value: Option<String>, env: &str, default: &str| {
+            if typesafe {
+                resolve_env(value, env, Some(default.to_string()))
+            } else {
+                Some(value.unwrap_or_else(|| default.to_string()))
+            }
+        };
         let base_url = normalize_base_url(
-            resolve_env(base_url, BASE_URL_ENV, Some(DEFAULT_BASE_URL.to_string()))
+            resolve(base_url, BASE_URL_ENV, provider.default_base_url())
                 .expect("default base URL is present"),
         )?;
-        let default_model = resolve_env(
-            default_model,
-            DEFAULT_MODEL_ENV,
-            Some(DEFAULT_MODEL.to_string()),
-        )
-        .expect("default model is present");
+        let default_model = resolve(default_model, DEFAULT_MODEL_ENV, provider.default_model())
+            .expect("default model is present");
+        let compression = resolve_compression(compression)?;
         Ok(Self {
+            compression: if typesafe {
+                compression
+            } else {
+                Compression::None
+            },
+            provider,
             api_key,
             base_url,
             default_model,
@@ -76,18 +93,17 @@ impl Config {
                 timeout.unwrap_or(Duration::from_secs_f64(DEFAULT_TIMEOUT_SECS)),
             )?,
             default_headers,
-            compression: resolve_compression(compression)?,
         })
     }
 }
 
 /// Strips the key and requires printable ASCII without whitespace. The error
 /// never contains the key.
-fn validate_api_key(api_key: &str) -> Result<String, Error> {
+fn validate_api_key(api_key: &str, key_env: &str) -> Result<String, Error> {
     let key = api_key.trim();
     if key.is_empty() {
         return Err(Error::sdk(format!(
-            "No API key was provided. Pass api_key or set the {API_KEY_ENV} environment variable."
+            "No API key was provided. Pass api_key or set the {key_env} environment variable."
         )));
     }
     if !key.bytes().all(|byte| matches!(byte, 0x21..=0x7e)) {
@@ -170,6 +186,7 @@ mod tests {
     fn resolved(base_url: Option<&str>) -> Result<Config, Error> {
         Config::resolve(
             "k",
+            Provider::TypeSafe,
             base_url.map(str::to_string),
             None,
             None,

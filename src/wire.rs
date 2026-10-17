@@ -85,6 +85,8 @@
 //!   - `noul`, `score`, `confidence`, the probabilities, and box edges are
 //!     `f64`, so `1` is written as `1.0`.
 //!   - A box answer's `confidence` is always written, as `null` when `None`.
+//!   - A refusal answer is written as `{"type":"refusal"}`. Its
+//!     [`RefusalAnswer::raw`] object is not written back.
 //!   - Score indexes are `u32`, so a key such as `"01"` is written as `"1"`,
 //!     and two keys for one index merge. Their order is kept.
 //!   - A token count above `i64::MAX` wraps to a negative number, as it always
@@ -97,7 +99,7 @@ use serde_json::{Map, Value};
 
 pub use crate::answer::{
     Answer, BoxAnswer, BoxCoordinates, ChoiceAnswer, ListModelsResponse, ModelMetadata, NoulAnswer,
-    ScoreAnswer, SystemOneResponse, Usage,
+    RefusalAnswer, ScoreAnswer, SystemOneResponse, Usage,
 };
 pub use crate::constants::{MODELS_PATH, SYSTEM_ONE_PATH};
 pub use crate::json::JsonContent;

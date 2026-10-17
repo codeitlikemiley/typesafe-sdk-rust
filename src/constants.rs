@@ -7,6 +7,43 @@ pub const BASE_URL_ENV: &str = "TYPESAFE_BASE_URL";
 /// Environment variable for the default model.
 pub const DEFAULT_MODEL_ENV: &str = "TYPESAFE_DEFAULT_MODEL";
 
+/// Environment variable that selects the provider for
+/// [`Client::from_env`](crate::Client::from_env): `typesafe` (the default),
+/// `clef`, or `openai`.
+pub const PROVIDER_ENV: &str = "TYPESAFE_PROVIDER";
+
+/// Environment variable for the Cloudflare API token of the Clef provider.
+#[cfg(feature = "clef")]
+pub const CLOUDFLARE_API_TOKEN_ENV: &str = "CLOUDFLARE_API_TOKEN";
+
+/// Environment variable for the Cloudflare account ID of the Clef provider.
+#[cfg(feature = "clef")]
+pub const CLOUDFLARE_ACCOUNT_ID_ENV: &str = "CLOUDFLARE_ACCOUNT_ID";
+
+/// Default base URL of the Clef provider, the Cloudflare API.
+#[cfg(feature = "clef")]
+pub const CLEF_DEFAULT_BASE_URL: &str = "https://api.cloudflare.com/client/v4";
+
+/// Default model of the Clef provider. `clef-flash` is the other Workers AI slug.
+#[cfg(feature = "clef")]
+pub const CLEF_DEFAULT_MODEL: &str = "clef";
+
+/// Environment variable for the API key of the OpenAI Decisions provider.
+#[cfg(feature = "openai-decisions")]
+pub const OPENAI_API_KEY_ENV: &str = "OPENAI_API_KEY";
+
+/// Default base URL of the OpenAI Decisions provider.
+#[cfg(feature = "openai-decisions")]
+pub const OPENAI_DEFAULT_BASE_URL: &str = "https://api.openai.com";
+
+/// Default model of the OpenAI Decisions provider.
+#[cfg(feature = "openai-decisions")]
+pub const OPENAI_DEFAULT_MODEL: &str = "gpt-6-luna";
+
+/// Path of the OpenAI Decisions endpoint (`POST`), appended to the base URL.
+#[cfg(feature = "openai-decisions")]
+pub const OPENAI_DECISIONS_PATH: &str = "/v1/decisions";
+
 /// Environment variable for the logging level.
 pub const LOG_LEVEL_ENV: &str = "TYPESAFE_LOG_LEVEL";
 

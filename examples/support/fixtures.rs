@@ -199,3 +199,59 @@ pub fn image_box() -> Value {
         }
     })
 }
+
+/// The answers of `examples/providers.rs` in the System One shape.
+fn provider_answers() -> Value {
+    json!({
+        "billing": {"type": "noul", "noul": 0.97},
+        "tone": {
+            "type": "choice",
+            "choice": "frustrated",
+            "confidence": 0.81,
+            "probabilities": {"calm": 0.19, "frustrated": 0.81}
+        }
+    })
+}
+
+/// TypeSafe System One response for `examples/providers.rs`.
+pub fn provider_system_one() -> Value {
+    json!({
+        "model": "jev-latest",
+        "usage": {"input_tokens": 30, "output_tokens": 2},
+        "answers": provider_answers()
+    })
+}
+
+/// Cloudflare Workers AI envelope around the same answers.
+pub fn provider_clef() -> Value {
+    json!({
+        "success": true,
+        "errors": [],
+        "messages": [],
+        "result": {
+            "model": "clef",
+            "usage": {"input_tokens": 30, "output_tokens": 2},
+            "answers": provider_answers()
+        }
+    })
+}
+
+/// OpenAI Decisions response with the same answers, in the shape of the
+/// public guide. Unverified against the live API.
+pub fn provider_openai() -> Value {
+    json!({
+        "answers": [
+            {"type": "predicate", "name": "billing", "probability": 0.97},
+            {
+                "type": "choice",
+                "name": "tone",
+                "choice": "frustrated",
+                "probabilities": [
+                    {"value": "calm", "probability": 0.19},
+                    {"value": "frustrated", "probability": 0.81}
+                ],
+                "confidence": 0.81
+            }
+        ]
+    })
+}

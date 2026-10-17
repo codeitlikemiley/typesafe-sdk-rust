@@ -47,6 +47,41 @@ let client = Client::builder()
 
 `Client::from_env()` reads `TYPESAFE_BASE_URL` when `base_url` is omitted. A trailing slash is stripped. `models()` uses that same base URL. Copy `examples/custom_base_url.rs`. Mock mounts `/v1/systemone` on the wiremock origin (`cargo run --example custom_base_url --features mock`). Live requires `TYPESAFE_BASE_URL` and does not fall back to `https://api.typesafe.ai`. The live branch sets `.model("jev-latest")`.
 
+## Use Cloudflare Clef or OpenAI Decisions
+
+The same client, questions, and answers work on three providers. Enable the feature, then pick the provider.
+
+```toml
+typesafe-sdk = { version = "0.3", features = ["clef", "openai-decisions"] }
+```
+
+```rust
+use typesafe_sdk::{Client, Provider};
+
+let clef = Client::builder()
+    .api_key(std::env::var("CLOUDFLARE_API_TOKEN").unwrap())
+    .provider(Provider::Clef { account_id: std::env::var("CLOUDFLARE_ACCOUNT_ID").unwrap() })
+    .build()?;
+let openai = Client::builder()
+    .api_key(std::env::var("OPENAI_API_KEY").unwrap())
+    .provider(Provider::OpenAiDecisions)
+    .build()?;
+```
+
+- `Client::from_env()` reads `TYPESAFE_PROVIDER`: `typesafe` (default), `clef`, or `openai`. The key is then `TYPESAFE_API_KEY`, `CLOUDFLARE_API_TOKEN`, or `OPENAI_API_KEY`. `clef` also needs `CLOUDFLARE_ACCOUNT_ID`.
+- Clef defaults to model `clef`. Use `.model("clef-flash")` for the smaller one.
+- OpenAI Decisions is experimental. It is built from the public guide and not checked against the live API. Its model is `gpt-6-luna`.
+- `TYPESAFE_BASE_URL` and `TYPESAFE_DEFAULT_MODEL` apply to TypeSafe only. `.base_url(...)` and `.model(...)` work on every provider.
+- Read answers the same way: `response.noul("name")?.noul`.
+- On OpenAI, a refused question is in `response.refusals()`. `response.noul(name)` on it is an error.
+- What a provider cannot do fails before any request with `Error::Unsupported { provider, feature }`:
+  - Clef and OpenAI: box questions, images, `models()`.
+  - Clef: more than 64 questions, names outside `[A-Za-z0-9_.-]` or over 100 characters, a choice with one label.
+  - OpenAI: state, instructions, or criteria descriptions that are not strings; noul criteria; a question without instructions.
+- A self-hosted Clef (SGLang `POST /v1/systemone`) is plain System One. Use `Provider::TypeSafe` with `.base_url(...)`.
+
+Copy `examples/providers.rs` (`cargo run --example providers --features "mock clef openai-decisions"`).
+
 ## Ask questions
 
 Copy this program. Change the state and the question names for your task.
@@ -175,7 +210,7 @@ let response = client
 
 ## Box questions
 
-`Question::box_("The dog")` asks where something is in an image. `Question::box_bare()` sends `{"type":"box"}`. The request must contain an image.
+`Question::box_("The dog")` asks where something is in an image. `Question::box_bare()` sends `{"type":"box"}`. The request must contain an image. On `https://api.typesafe.ai`, use `.model("jev-preview")`: as of 2026-10-17 `jev-latest` rejects box questions with `400 Invalid request.`
 
 ```rust
 let response = client
@@ -269,6 +304,10 @@ To forward a request upstream, pass `request.state`, `request.questions`, and `S
 14. A `choice` with no labels is refused.
 15. An image in the text but not in `images`, `assets`, or an attachment is not sent. Its reference stays plain text.
 16. Images need `TypeSafe-Danger-Zone-Images: true`. Set it with `ClientBuilder::header`.
+17. `Provider::Clef` and `Provider::OpenAiDecisions` need the `clef` and `openai-decisions` features. `TYPESAFE_PROVIDER=clef` without the feature is an error that names it.
+18. Do not send images or box questions to Clef or OpenAI. They fail with `Error::Unsupported` before any request.
+19. On OpenAI, pass strings, not JSON objects, as state, instructions, and descriptions.
+20. `Error` is `#[non_exhaustive]`. A `match` on it needs a `_` arm.
 
 ## More reading
 
