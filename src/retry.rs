@@ -90,7 +90,7 @@ impl RetryPolicy {
             Error::Timeout { .. } => self.api_timeout_error,
             Error::Connection { .. } => self.api_connection_error,
             Error::Api(api) => self.http_statuses.contains(api.status),
-            Error::Sdk(_) => false,
+            Error::Sdk(_) | Error::Unsupported { .. } => false,
         }
     }
 

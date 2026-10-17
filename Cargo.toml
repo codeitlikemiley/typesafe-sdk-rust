@@ -16,10 +16,16 @@ exclude = [".github/"]
 name = "blocking_triage"
 required-features = ["blocking"]
 
+[[example]]
+name = "providers"
+required-features = ["clef", "openai-decisions"]
+
 [features]
 default = ["zstd"]
 blocking = ["tokio/rt", "tokio/net"]
 mock = ["dep:wiremock"]
+clef = []
+openai-decisions = []
 zstd = ["dep:zstd"]
 
 [dependencies]

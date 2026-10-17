@@ -252,3 +252,75 @@ fn example_blocking_triage() {
         assert_eq!(response.choice("category").unwrap().choice, "bug_report");
     });
 }
+
+#[cfg(all(feature = "clef", feature = "openai-decisions"))]
+#[tokio::test]
+async fn example_providers() {
+    use typesafe_sdk::{Client, Provider, RetryPolicy};
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let clef = Provider::Clef {
+        account_id: "mock-account".to_string(),
+    };
+    for (provider, route, body, model) in [
+        (
+            Provider::TypeSafe,
+            "/v1/systemone",
+            fixtures::provider_system_one(),
+            "jev-latest",
+        ),
+        (
+            clef,
+            "/accounts/mock-account/ai/run/@cf/cloudflare/clef",
+            fixtures::provider_clef(),
+            "clef",
+        ),
+        (
+            Provider::OpenAiDecisions,
+            "/v1/decisions",
+            fixtures::provider_openai(),
+            "gpt-6-luna",
+        ),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(route))
+            .and(header("authorization", "Bearer mock-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = Client::builder()
+            .api_key("mock-key")
+            .provider(provider)
+            .base_url(server.uri())
+            .retry(RetryPolicy::disabled())
+            .build()
+            .expect("client");
+        let response = client
+            .system_one(
+                "charged twice",
+                [
+                    ("billing", Question::noul("billing?")),
+                    (
+                        "tone",
+                        Question::choice(
+                            "tone?",
+                            [("calm", Some("c".into())), ("frustrated", None)],
+                        ),
+                    ),
+                ],
+            )
+            .await
+            .expect("system_one");
+        assert_eq!(response.model, model);
+        assert_eq!(response.noul("billing").unwrap().noul, 0.97);
+        let tone = response.choice("tone").unwrap();
+        assert_eq!(
+            (tone.choice.as_str(), tone.confidence),
+            ("frustrated", 0.81)
+        );
+        assert_eq!(tone.probabilities["calm"], 0.19);
+    }
+}

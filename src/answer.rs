@@ -203,6 +203,28 @@ impl<'de> Deserialize<'de> for BoxAnswer {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[non_exhaustive]
+/// The model declined to answer a question. Holds the answer object as received.
+///
+/// OpenAI Decisions documents a refusal as `{"type":"refusal","name":...}`
+/// with no reason field, so the SDK keeps the whole object in
+/// [`raw`](Self::raw) instead of guessing at one. It serializes as
+/// `{"type":"refusal"}`: `raw` is not written back.
+pub struct RefusalAnswer {
+    /// The refusal object exactly as the server sent it, `type` and `name`
+    /// included.
+    #[serde(skip)]
+    pub raw: Map<String, Value>,
+}
+
+impl RefusalAnswer {
+    /// Builds a refusal from the answer object as received.
+    pub fn new(raw: Map<String, Value>) -> Self {
+        Self { raw }
+    }
+}
+
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -221,6 +243,9 @@ pub enum Answer {
     Score(ScoreAnswer),
     /// Located box. Holds a `BoxAnswer`.
     Box(BoxAnswer),
+    /// The model declined to answer. Holds a `RefusalAnswer`. Only OpenAI
+    /// Decisions documents refusals.
+    Refusal(RefusalAnswer),
 }
 
 impl Answer {
@@ -252,6 +277,14 @@ impl Answer {
     pub fn as_box(&self) -> Option<&BoxAnswer> {
         match self {
             Self::Box(answer) => Some(answer),
+            _ => None,
+        }
+    }
+
+    /// Returns the inner `RefusalAnswer` when the answer is `Answer::Refusal`, else `None`.
+    pub fn as_refusal(&self) -> Option<&RefusalAnswer> {
+        match self {
+            Self::Refusal(answer) => Some(answer),
             _ => None,
         }
     }
@@ -492,36 +525,57 @@ impl SystemOneResponse {
         &self.raw_body
     }
 
-    /// Returns the noul answer called `name`. Errors when the name or type does not match.
+    /// Returns the noul answer called `name`. Errors when the name or type does
+    /// not match, or when the model refused the question.
     pub fn noul(&self, name: &str) -> Result<&NoulAnswer, Error> {
         self.answers
             .get(name)
             .and_then(Answer::as_noul)
-            .ok_or_else(|| Error::sdk(format!("No noul answer named \"{name}\".")))
+            .ok_or_else(|| self.missing("noul", name))
     }
 
-    /// Returns the choice answer called `name`. Errors when the name or type does not match.
+    /// Returns the choice answer called `name`. Errors when the name or type does
+    /// not match, or when the model refused the question.
     pub fn choice(&self, name: &str) -> Result<&ChoiceAnswer, Error> {
         self.answers
             .get(name)
             .and_then(Answer::as_choice)
-            .ok_or_else(|| Error::sdk(format!("No choice answer named \"{name}\".")))
+            .ok_or_else(|| self.missing("choice", name))
     }
 
-    /// Returns the score answer called `name`. Errors when the name or type does not match.
+    /// Returns the score answer called `name`. Errors when the name or type does
+    /// not match, or when the model refused the question.
     pub fn score(&self, name: &str) -> Result<&ScoreAnswer, Error> {
         self.answers
             .get(name)
             .and_then(Answer::as_score)
-            .ok_or_else(|| Error::sdk(format!("No score answer named \"{name}\".")))
+            .ok_or_else(|| self.missing("score", name))
     }
 
-    /// Returns the box answer called `name`. Errors when the name or type does not match.
+    /// Returns the box answer called `name`. Errors when the name or type does
+    /// not match, or when the model refused the question.
     pub fn box_(&self, name: &str) -> Result<&BoxAnswer, Error> {
         self.answers
             .get(name)
             .and_then(Answer::as_box)
-            .ok_or_else(|| Error::sdk(format!("No box answer named \"{name}\".")))
+            .ok_or_else(|| self.missing("box", name))
+    }
+
+    /// Iterates the refused questions with their names, in answer order.
+    pub fn refusals(&self) -> impl Iterator<Item = (&str, &RefusalAnswer)> {
+        self.answers
+            .iter()
+            .filter_map(|(name, answer)| answer.as_refusal().map(|answer| (name.as_str(), answer)))
+    }
+
+    /// The error for a typed lookup of `name` that found no `kind` answer.
+    fn missing(&self, kind: &str, name: &str) -> Error {
+        match self.answers.get(name) {
+            Some(Answer::Refusal(_)) => Error::sdk(format!(
+                "The model refused to answer \"{name}\", so there is no {kind} answer."
+            )),
+            _ => Error::sdk(format!("No {kind} answer named \"{name}\".")),
+        }
     }
 
     /// Iterates the box answers with their question names, in answer order.
@@ -596,6 +650,18 @@ pub(crate) fn decode_system_one(
     let fields = serde_json::from_slice::<Value>(&body)
         .map_err(|_| "model".to_string())
         .and_then(|parsed| decode_fields(&parsed));
+    finish_response(status, headers, endpoint, body, fields)
+}
+
+/// A response from decoded fields with the HTTP response it came from, or the
+/// `ResponseValidation` error for the path of the first bad field.
+pub(crate) fn finish_response(
+    status: u16,
+    headers: http::HeaderMap,
+    endpoint: Option<String>,
+    body: bytes::Bytes,
+    fields: Result<(String, Usage, IndexMap<String, Answer>), String>,
+) -> Result<SystemOneResponse, Error> {
     match fields {
         Ok((model, usage, answers)) => Ok(SystemOneResponse {
             model,
@@ -621,7 +687,9 @@ pub(crate) fn decode_system_one(
 }
 
 /// Decodes a System One response object. Errors with the path of the first bad field.
-fn decode_fields(parsed: &Value) -> Result<(String, Usage, IndexMap<String, Answer>), String> {
+pub(crate) fn decode_fields(
+    parsed: &Value,
+) -> Result<(String, Usage, IndexMap<String, Answer>), String> {
     let object = parsed.as_object().ok_or_else(|| "model".to_string())?;
     let model = object
         .get("model")
@@ -686,7 +754,7 @@ fn decode_model_list(parsed: &Value) -> Result<Vec<ModelMetadata>, String> {
 }
 
 /// Reads the counts of a `usage` object. Errors with the key of a bad count.
-fn usage_fields(object: &Map<String, Value>) -> Result<Usage, String> {
+pub(crate) fn usage_fields(object: &Map<String, Value>) -> Result<Usage, String> {
     Ok(Usage {
         input_tokens: optional_i64(object, "input_tokens")?,
         output_tokens: optional_i64(object, "output_tokens")?,
@@ -751,6 +819,7 @@ fn decode_answer(raw: &Value) -> Result<Option<Answer>, String> {
         "choice" => Answer::Choice(choice_fields(object)?),
         "score" => Answer::Score(score_fields(object)?),
         "box" => Answer::Box(box_fields(object)?),
+        "refusal" => Answer::Refusal(RefusalAnswer::new(object.clone())),
         _ => return Ok(None),
     };
     Ok(Some(answer))
@@ -843,7 +912,7 @@ fn coordinate_fields(object: &Map<String, Value>) -> Result<BoxCoordinates, Stri
 }
 
 /// The `type` of an answer object `decode_answer` did not recognize.
-fn answer_type(raw: &Value) -> &str {
+pub(crate) fn answer_type(raw: &Value) -> &str {
     raw.get("type").and_then(Value::as_str).unwrap_or_default()
 }
 

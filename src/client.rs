@@ -9,11 +9,12 @@ use serde_json::{Map, Value};
 use crate::answer::{ListModelsResponse, SystemOneResponse, decode_models, decode_system_one};
 use crate::asset::{AttachGuard, Attached, Image, pending_assets, resolve_assets, snapshot};
 use crate::config::{Compression, Config};
-use crate::constants::{API_KEY_ENV, JSON_CONTENT_TYPE, MODELS_PATH, SYSTEM_ONE_PATH};
+use crate::constants::{JSON_CONTENT_TYPE, MODELS_PATH, SYSTEM_ONE_PATH};
 use crate::error::{Error, api_error, deserialize_body, format_endpoint};
 use crate::json::IntoState;
 use crate::logging::{RedactedHeaders, redact_text};
 use crate::multipart::Part;
+use crate::provider::Provider;
 use crate::question::{Question, normalize_questions};
 use crate::request::{Payload, PreparedRequest, prepare, set_retry_count};
 use crate::retry::RetryPolicy;
@@ -55,6 +56,7 @@ pub struct ApiKeySet;
 /// `Debug` shows the API key and secret header values as `***`.
 pub struct ClientBuilder<S> {
     api_key: Option<String>,
+    provider: Provider,
     model: Option<String>,
     retry: Option<RetryPolicy>,
     timeout: Option<Duration>,
@@ -69,6 +71,7 @@ impl<S> std::fmt::Debug for ClientBuilder<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ClientBuilder")
             .field("api_key", &self.api_key.as_ref().map(|_| "***"))
+            .field("provider", &self.provider)
             .field("model", &self.model)
             .field("retry", &self.retry)
             .field("timeout", &self.timeout)
@@ -85,6 +88,7 @@ impl ClientBuilder<NoApiKey> {
     pub fn api_key(self, api_key: impl Into<String>) -> ClientBuilder<ApiKeySet> {
         ClientBuilder {
             api_key: Some(api_key.into()),
+            provider: self.provider,
             model: self.model,
             retry: self.retry,
             timeout: self.timeout,
@@ -120,6 +124,7 @@ impl ClientBuilder<ApiKeySet> {
             .expect("ApiKeySet guarantees api_key is present");
         let config = Config::resolve(
             &api_key,
+            self.provider,
             self.base_url,
             self.model,
             self.timeout,
@@ -145,7 +150,20 @@ impl ClientBuilder<ApiKeySet> {
 }
 
 impl<S> ClientBuilder<S> {
-    /// Sets the default model, overriding `TYPESAFE_DEFAULT_MODEL` and `jev-latest`.
+    /// Sets the decision backend. Defaults to [`Provider::TypeSafe`].
+    ///
+    /// The provider picks the default base URL and model. `base_url` and
+    /// `model` still override them, for example to go through a gateway.
+    /// `TYPESAFE_BASE_URL` and `TYPESAFE_DEFAULT_MODEL` apply to
+    /// `Provider::TypeSafe` only. Request bodies are never compressed for the
+    /// other providers, whatever [`compression`](Self::compression) says.
+    pub fn provider(mut self, provider: Provider) -> Self {
+        self.provider = provider;
+        self
+    }
+
+    /// Sets the default model, overriding `TYPESAFE_DEFAULT_MODEL` and the
+    /// provider's default, `jev-latest` for TypeSafe.
     pub fn model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
         self
@@ -179,7 +197,8 @@ impl<S> ClientBuilder<S> {
         self
     }
 
-    /// Sets the base URL, overriding `TYPESAFE_BASE_URL` and `https://api.typesafe.ai`.
+    /// Sets the base URL, overriding `TYPESAFE_BASE_URL` and the provider's
+    /// default, `https://api.typesafe.ai` for TypeSafe.
     pub fn base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = Some(base_url.into());
         self
@@ -213,6 +232,7 @@ impl Default for ClientBuilder<NoApiKey> {
     fn default() -> Self {
         Self {
             api_key: None,
+            provider: Provider::TypeSafe,
             model: None,
             retry: None,
             timeout: None,
@@ -231,14 +251,23 @@ impl Client {
         ClientBuilder::default()
     }
 
-    /// Builds a `Client` from the environment. Errors when `TYPESAFE_API_KEY` is unset or blank.
+    /// Builds a `Client` from the environment.
+    ///
+    /// `TYPESAFE_PROVIDER` picks the provider: `typesafe` (the default when
+    /// unset), `clef`, or `openai`. The key comes from that provider's
+    /// variable: `TYPESAFE_API_KEY`, `CLOUDFLARE_API_TOKEN`, or
+    /// `OPENAI_API_KEY`. `clef` also needs `CLOUDFLARE_ACCOUNT_ID`. Errors when
+    /// a needed variable is unset or blank, on an unknown provider, and on a
+    /// provider whose cargo feature is off.
     pub fn from_env() -> Result<Self, Error> {
-        let api_key = crate::config::resolve_env(None, API_KEY_ENV, None).ok_or_else(|| {
+        let provider = Provider::from_env()?;
+        let key_env = provider.key_env();
+        let api_key = crate::config::resolve_env(None, key_env, None).ok_or_else(|| {
             Error::sdk(format!(
-                "No API key was provided. Pass api_key or set the {API_KEY_ENV} environment variable."
+                "No API key was provided. Pass api_key or set the {key_env} environment variable."
             ))
         })?;
-        Self::builder().api_key(api_key).build()
+        Self::builder().provider(provider).api_key(api_key).build()
     }
 
     /// Builds a `Client` with the given API key and default model, timeout, and retry policy.
@@ -281,6 +310,10 @@ impl Client {
     /// A request that sends images goes as `multipart/form-data`: the JSON body
     /// first, as the part `request`, with an `assets` object naming each image's
     /// part, then each image's bytes. See [`SystemOneOpts::assets`].
+    ///
+    /// On another [`Provider`], the request goes to that provider's endpoint
+    /// in its shape, and a request it cannot express fails with
+    /// [`Error::Unsupported`] before anything is sent.
     pub async fn system_one_opts<S, I, K>(
         &self,
         state: S,
@@ -292,66 +325,49 @@ impl Client {
         I: IntoIterator<Item = (K, Question)>,
         K: Into<String>,
     {
-        let mut body = SystemOneRequest {
+        let body = SystemOneRequest {
             state: state.into_state()?,
             model: Some(
                 opts.model
+                    .clone()
                     .unwrap_or_else(|| self.config.default_model.clone()),
             ),
             questions: normalize_questions(questions)?,
-            extra: opts.extra_body.unwrap_or_default(),
+            extra: opts.extra_body.clone().unwrap_or_default(),
         };
         let json = encode_json(&body)?;
-        // An `assets` key in `extra_body` replaces the SDK's: the body goes as it is.
-        let payload = if body.extra.contains_key("assets") {
-            Payload::json(json)
-        } else {
-            let pending =
-                pending_assets(&json, &opts.assets, &opts.images, snapshot(&self.attached));
-            if pending.is_empty() {
-                // The API rejects an empty `assets`, so it is left out.
-                Payload::json(json)
-            } else {
-                let parts: Vec<String> = (0..pending.len()).map(|i| format!("asset-{i}")).collect();
-                let entries = pending
-                    .keys()
-                    .zip(&parts)
-                    .map(|(name, part)| {
-                        (
-                            name.clone(),
-                            serde_json::json!({"type": "image", "part": part}),
-                        )
-                    })
-                    .collect();
-                body.extra
-                    .insert("assets".to_string(), Value::Object(entries));
-                let json = encode_json(&body)?;
-                let images = resolve_assets(&pending).await?;
-                // The API requires each part to be claimed by exactly one asset,
-                // so an image under several names is sent once per name.
-                let mut multipart = vec![Part {
-                    name: "request",
-                    content_type: JSON_CONTENT_TYPE,
-                    content: &json,
-                    filename: None,
-                }];
-                multipart.extend(images.iter().zip(&parts).map(|(image, part)| Part {
-                    name: part,
-                    content_type: image.content_type,
-                    content: &image.data,
-                    filename: Some(part),
-                }));
-                let (content_type, bytes) = crate::multipart::encode(&multipart);
-                Payload {
-                    content_type,
-                    bytes,
-                }
+        let (path, payload, decoder) = match &self.config.provider {
+            Provider::TypeSafe => (
+                SYSTEM_ONE_PATH.to_string(),
+                self.system_one_payload(body, json, &opts).await?,
+                Decoder::SystemOne,
+            ),
+            #[cfg(feature = "clef")]
+            provider @ Provider::Clef { account_id } => {
+                crate::provider::reject_images(provider, &json, &body, &opts, &self.attached)?;
+                crate::provider::clef::check(&body)?;
+                let model = crate::provider::effective_model(&body);
+                (
+                    crate::provider::clef::path(account_id, &model),
+                    Payload::json(json),
+                    Decoder::Clef,
+                )
+            }
+            #[cfg(feature = "openai-decisions")]
+            provider @ Provider::OpenAiDecisions => {
+                crate::provider::reject_images(provider, &json, &body, &opts, &self.attached)?;
+                let (bytes, plan) = crate::provider::openai::encode(&body)?;
+                (
+                    crate::constants::OPENAI_DECISIONS_PATH.to_string(),
+                    Payload::json(bytes),
+                    Decoder::OpenAi(plan),
+                )
             }
         };
         let request = prepare(
             &self.config,
             "POST",
-            SYSTEM_ONE_PATH,
+            &path,
             Some(payload),
             opts.timeout,
             &opts.extra_headers,
@@ -363,8 +379,76 @@ impl Client {
             }
             None => &self.retry,
         };
-        let (status, headers, endpoint, bytes) = self.send(request, retry).await?;
-        decode_system_one(status, headers, Some(endpoint), bytes)
+        let sent = self.send(request, retry).await;
+        match decoder {
+            Decoder::SystemOne => {
+                let (status, headers, endpoint, bytes) = sent?;
+                decode_system_one(status, headers, Some(endpoint), bytes)
+            }
+            #[cfg(feature = "clef")]
+            Decoder::Clef => {
+                let (status, headers, endpoint, bytes) =
+                    sent.map_err(crate::provider::clef::with_cloudflare_message)?;
+                crate::provider::clef::decode(status, headers, Some(endpoint), bytes)
+            }
+            #[cfg(feature = "openai-decisions")]
+            Decoder::OpenAi(plan) => {
+                let (status, headers, endpoint, bytes) = sent?;
+                crate::provider::openai::decode(status, headers, Some(endpoint), bytes, &plan)
+            }
+        }
+    }
+
+    /// The System One body: JSON, or multipart when the request sends images.
+    async fn system_one_payload(
+        &self,
+        mut body: SystemOneRequest,
+        json: Vec<u8>,
+        opts: &SystemOneOpts,
+    ) -> Result<Payload, Error> {
+        // An `assets` key in `extra_body` replaces the SDK's: the body goes as it is.
+        if body.extra.contains_key("assets") {
+            return Ok(Payload::json(json));
+        }
+        let pending = pending_assets(&json, &opts.assets, &opts.images, snapshot(&self.attached));
+        if pending.is_empty() {
+            // The API rejects an empty `assets`, so it is left out.
+            return Ok(Payload::json(json));
+        }
+        let parts: Vec<String> = (0..pending.len()).map(|i| format!("asset-{i}")).collect();
+        let entries = pending
+            .keys()
+            .zip(&parts)
+            .map(|(name, part)| {
+                (
+                    name.clone(),
+                    serde_json::json!({"type": "image", "part": part}),
+                )
+            })
+            .collect();
+        body.extra
+            .insert("assets".to_string(), Value::Object(entries));
+        let json = encode_json(&body)?;
+        let images = resolve_assets(&pending).await?;
+        // The API requires each part to be claimed by exactly one asset,
+        // so an image under several names is sent once per name.
+        let mut multipart = vec![Part {
+            name: "request",
+            content_type: JSON_CONTENT_TYPE,
+            content: &json,
+            filename: None,
+        }];
+        multipart.extend(images.iter().zip(&parts).map(|(image, part)| Part {
+            name: part,
+            content_type: image.content_type,
+            content: &image.data,
+            filename: Some(part),
+        }));
+        let (content_type, bytes) = crate::multipart::encode(&multipart);
+        Ok(Payload {
+            content_type,
+            bytes,
+        })
     }
 
     /// Lists models from `GET /v1/models` with client defaults. Returns decoded model entries.
@@ -373,7 +457,16 @@ impl Client {
     }
 
     /// Lists models from `GET /v1/models` with per-call `ModelsOpts`. Returns decoded model entries.
+    ///
+    /// Only [`Provider::TypeSafe`] lists models. Other providers return
+    /// [`Error::Unsupported`] without a request.
     pub async fn models_opts(&self, opts: ModelsOpts) -> Result<ListModelsResponse, Error> {
+        if self.config.provider != Provider::TypeSafe {
+            return Err(Error::Unsupported {
+                provider: self.config.provider.name(),
+                feature: "models()".to_string(),
+            });
+        }
         let request = prepare(
             &self.config,
             "GET",
@@ -509,6 +602,15 @@ fn map_reqwest_error(
     }
 }
 
+/// How a provider's response body is decoded.
+enum Decoder {
+    SystemOne,
+    #[cfg(feature = "clef")]
+    Clef,
+    #[cfg(feature = "openai-decisions")]
+    OpenAi(crate::provider::openai::Plan),
+}
+
 fn encode_json(body: &SystemOneRequest) -> Result<Vec<u8>, Error> {
     serde_json::to_vec(body)
         .map_err(|_| Error::sdk("The request body could not be encoded as JSON"))
@@ -532,6 +634,9 @@ pub struct SystemOneOpts {
     /// Extra headers merged over the client headers for one call.
     pub extra_headers: HeaderMap,
     /// Extra body keys shallow-merged over `state`, `model`, and `questions`. Last write wins.
+    ///
+    /// On `Provider::OpenAiDecisions` they merge over the Decisions body,
+    /// `model`, `input`, and `questions`, instead.
     ///
     /// An `assets` key here replaces the one the client would write: the body
     /// is sent as plain JSON, and no image is read or sent.

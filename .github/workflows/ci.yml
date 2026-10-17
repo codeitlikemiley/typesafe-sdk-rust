@@ -25,6 +25,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo check --features mock
       - run: cargo check --features "mock blocking"
+      - run: cargo check --features "mock blocking clef openai-decisions"
 
   clippy:
     name: clippy
@@ -36,6 +37,8 @@ jobs:
           components: clippy
       - run: cargo clippy --all-targets --features mock -- -D warnings
       - run: cargo clippy --all-targets --features "mock blocking" -- -D warnings
+      - run: cargo clippy --all-targets --features "mock blocking clef openai-decisions" -- -D warnings
+      - run: cargo clippy --all-targets --no-default-features --features "mock blocking" -- -D warnings
 
   test:
     name: test
@@ -46,6 +49,7 @@ jobs:
       - run: cargo test --features mock
       - run: cargo test --features "mock blocking"
       - run: cargo test --no-default-features --features "mock blocking"
+      - run: cargo test --features "mock blocking clef openai-decisions"
 
   examples:
     name: build examples
@@ -55,3 +59,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --examples --features mock
       - run: cargo build --example blocking_triage --features "mock blocking"
+      - run: cargo build --examples --features "mock clef openai-decisions"

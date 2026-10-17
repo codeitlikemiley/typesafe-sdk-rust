@@ -7,6 +7,9 @@ use serde_json::Value;
 use crate::constants::MAX_ERROR_BODY_LENGTH;
 
 /// A client, transport, or API failure.
+///
+/// New variants may be added in minor releases, so a `match` needs a `_` arm.
+#[non_exhaustive]
 #[derive(Debug)]
 pub enum Error {
     /// Client-side misuse such as a bad argument or missing key. Never retried.
@@ -23,11 +26,31 @@ pub enum Error {
     },
     /// HTTP error response, or a 2xx body that failed to decode.
     Api(Box<ApiError>),
+    /// The client's provider cannot express part of the request, such as a box
+    /// question on Clef. Returned before any request is sent. Never retried.
+    Unsupported {
+        /// Provider name, such as `"Clef"` or `"OpenAI Decisions"`.
+        provider: &'static str,
+        /// What the provider does not support, such as
+        /// `box questions (question "dog")`.
+        feature: String,
+    },
 }
 
 impl Error {
     pub(crate) fn sdk(message: impl Into<String>) -> Self {
         Self::Sdk(message.into())
+    }
+
+    #[cfg_attr(
+        not(any(feature = "clef", feature = "openai-decisions")),
+        allow(dead_code)
+    )]
+    pub(crate) fn unsupported(provider: &'static str, feature: impl Into<String>) -> Self {
+        Self::Unsupported {
+            provider,
+            feature: feature.into(),
+        }
     }
 
     /// Returns the inner `ApiError` when the error is `Error::Api`, else `None`.
@@ -52,6 +75,9 @@ impl fmt::Display for Error {
                 )
             }
             Self::Api(error) => fmt::Display::fmt(error, f),
+            Self::Unsupported { provider, feature } => {
+                write!(f, "The {provider} provider does not support {feature}.")
+            }
         }
     }
 }
@@ -87,6 +113,11 @@ impl ApiError {
     /// Returns `retry_after` in milliseconds. `None` when the server sent no wait.
     pub fn retry_after_ms(&self) -> Option<f64> {
         self.retry_after.map(|delay| delay.as_secs_f64() * 1000.0)
+    }
+
+    #[cfg(feature = "clef")]
+    pub(crate) fn set_message(&mut self, message: String) {
+        self.message = message;
     }
 }
 
@@ -182,6 +213,29 @@ pub(crate) fn api_error(
     Error::Api(Box::new(ApiError {
         status,
         kind,
+        body,
+        headers,
+        endpoint,
+        field_path: None,
+        retry_after,
+        message,
+    }))
+}
+
+/// An `Error::Api` for `status` whose message is `message` instead of one read
+/// from the body.
+#[cfg_attr(not(feature = "clef"), allow(dead_code))]
+pub(crate) fn api_error_with_message(
+    status: u16,
+    body: Option<ErrorBody>,
+    headers: HeaderMap,
+    endpoint: Option<String>,
+    message: String,
+) -> Error {
+    let retry_after = parse_retry_after(&headers);
+    Error::Api(Box::new(ApiError {
+        status,
+        kind: ApiErrorKind::from_status(status),
         body,
         headers,
         endpoint,
@@ -355,7 +409,10 @@ pub(crate) fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a s
 fn strip_userinfo(url: &str) -> String {
     match url.split_once("://") {
         Some((scheme, rest)) => {
-            if let Some(at) = rest.find('@') {
+            // Only the authority holds userinfo; a path such as Clef's
+            // `/ai/run/@cf/...` may contain `@` too.
+            let authority = rest.find('/').map_or(rest, |slash| &rest[..slash]);
+            if let Some(at) = authority.rfind('@') {
                 format!("{scheme}://{}", &rest[at + 1..])
             } else {
                 url.to_string()
@@ -421,6 +478,13 @@ mod tests {
                 "https://user:password@example.test/v1/models?token=secret#fragment"
             ),
             "GET https://example.test/v1/models"
+        );
+        assert_eq!(
+            format_endpoint(
+                "POST",
+                "https://u:p@api.example/accounts/a/ai/run/@cf/cloudflare/clef"
+            ),
+            "POST https://api.example/accounts/a/ai/run/@cf/cloudflare/clef"
         );
     }
 }

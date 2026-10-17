@@ -311,7 +311,7 @@ impl<'de> Deserialize<'de> for Question {
 /// The typed question that serializes back to exactly `map`: the same keys and
 /// values in the same order. `None` when no typed variant does, so the caller
 /// keeps `Raw` and a round trip neither drops nor reorders a key.
-fn typed(map: &Map<String, Value>) -> Option<Question> {
+pub(crate) fn typed(map: &Map<String, Value>) -> Option<Question> {
     if map
         .keys()
         .any(|key| !matches!(key.as_str(), "type" | "instructions" | "criteria"))
