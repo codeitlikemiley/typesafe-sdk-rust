@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 (unreleased)
+## 0.3.0 (2026-10-17)
 
 Parity with Python `typesafe-sdk` 0.7.5: image assets, box questions, zstd request compression, the request and API key checks of 0.7.1 and 0.7.3, and a typed decode of the raw response for 0.7.0's `response_model`. Also two more decision backends behind cargo features: Cloudflare Clef and OpenAI Decisions (experimental).
 
@@ -48,9 +48,9 @@ Parity with Python `typesafe-sdk` 0.7.5: image assets, box questions, zstd reque
 
 ### MSRV
 
-Still Rust 1.85. The new dependencies build on 1.85.0. The 0.2.0 notes on `yoke-derive` and `wiremock` still apply.
+Still Rust 1.85. The new dependencies build on 1.85.0. The lockfile moves `yoke-derive` from 0.8.3, which is yanked and needs 1.87, to 0.8.4, which builds on 1.85, so the library with every feature except `mock` needs no pin on 1.85. The 0.2.0 note on `wiremock` still applies to `mock` and the tests.
 
-## 0.2.0
+## 0.2.0 (2026-09-29)
 
 The types the client sends and decodes now serve the System One shape in both directions. The HTTP stack moves to `reqwest` 0.12 and `http` 1, so a caller on that stack can share its client instead of building a second one.
 
