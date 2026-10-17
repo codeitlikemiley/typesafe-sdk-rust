@@ -197,6 +197,7 @@ use typesafe_sdk::{Client, Image, Question, SystemOneOpts};
 let client = Client::builder()
     .api_key("sk-...")
     .header("TypeSafe-Danger-Zone-Images", "true")?
+    .model("jev-preview") // box questions: see below
     .build()?;
 let photo = Image::from_path("photos/product.png");
 let response = client
@@ -210,7 +211,7 @@ let edges = &response.box_("product")?.box_;
 println!("{} {} {} {}", edges.top, edges.bottom, edges.left, edges.right);
 ```
 
-Image support on the API is opt-in. Send `TypeSafe-Danger-Zone-Images: true`, as above. The client does not add it. Images need a vision-language model.
+Image support on the API is opt-in. Send `TypeSafe-Danger-Zone-Images: true`, as above. The client does not add it. Images need a vision-language model. As of 2026-10-17, `https://api.typesafe.ai` answers box questions only with `jev-preview`; with `jev-latest` it returns `400 Invalid request.`, from this crate and the Python SDK alike. Noul, choice, and score questions about an image work with either model.
 
 A request with images goes as `multipart/form-data`: the JSON body is the `request` part, with an `assets` object naming each image's part, and the image bytes follow. A file is read on the first request that sends it and kept after that. The SDK only checks that the data is not empty and labels PNG and JPEG by their signature. It sets no size limit. `Image::from_base64` decodes base64 text.
 

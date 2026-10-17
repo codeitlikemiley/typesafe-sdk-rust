@@ -210,7 +210,7 @@ let response = client
 
 ## Box questions
 
-`Question::box_("The dog")` asks where something is in an image. `Question::box_bare()` sends `{"type":"box"}`. The request must contain an image.
+`Question::box_("The dog")` asks where something is in an image. `Question::box_bare()` sends `{"type":"box"}`. The request must contain an image. On `https://api.typesafe.ai`, use `.model("jev-preview")`: as of 2026-10-17 `jev-latest` rejects box questions with `400 Invalid request.`
 
 ```rust
 let response = client
