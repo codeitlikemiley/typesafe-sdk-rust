@@ -5,7 +5,7 @@
 ### Added
 - `Transport`, `TransportRequest`, `TransportResponse` and `ClientBuilder::transport`: send requests through any HTTP stack. The client still builds, compresses, retries, and decodes; the transport moves bytes and waits between retries. Connection messages a transport returns are masked like reqwest's.
 - `ReqwestTransport`, the default transport, behind the new default `reqwest` feature.
-- The crate builds for `wasm32-wasip2` with `default-features = false`, for hosts such as Spin. On wasm, `BoxFuture` and `Transport` have no `Send`/`Sync` bounds, and `Image::from_path` reads with `std::fs`. CI checks the wasm build.
+- The crate builds for `wasm32-wasip2` with `default-features = false`, for hosts such as Spin. `BoxFuture` is `Send` and `Transport` is `Send + Sync` on every target, so `Client` futures stay usable in Leptos and axum handlers on wasm. Without the `reqwest` feature, `Image::from_path` reads with `std::fs`. CI checks the wasm build.
 
 ### Changed
 - **Breaking:** `reqwest` and `tokio` are optional, enabled by the `reqwest` feature (default). With `default-features = false`, add `features = ["reqwest"]` to keep the built-in client, or pass a transport; `build()` without either returns `Error::Sdk`. `ClientBuilder::http_client` needs the `reqwest` feature, and `blocking` enables it.

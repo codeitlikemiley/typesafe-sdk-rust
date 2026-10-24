@@ -166,7 +166,7 @@ let client = Client::builder()
     .build()?;
 ```
 
-`zstd` needs a C toolchain for the target, so leave it off on wasm and set `Compression::None`. On wasm, `BoxFuture` and `Transport` drop their `Send`/`Sync` bounds, because host HTTP futures are single-threaded. `Image::from_path` reads with `std::fs` there. CI checks `wasm32-wasip2` with and without the provider features. A transport also stands in for an HTTP stack in tests: see [`tests/transport.rs`](tests/transport.rs).
+`zstd` needs a C toolchain for the target, so leave it off on wasm and set `Compression::None`. `BoxFuture` is `Send` and `Transport` is `Send + Sync` on every target, as server frameworks such as Leptos and axum require; Spin's outgoing HTTP futures already are. Wrap a host future that is not (for example with `send_wrapper`). `Image::from_path` reads with `std::fs` there. CI checks `wasm32-wasip2` with and without the provider features. A transport also stands in for an HTTP stack in tests: see [`tests/transport.rs`](tests/transport.rs).
 
 ## Providers
 

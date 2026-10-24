@@ -16,25 +16,10 @@ use http::HeaderMap;
 
 use crate::error::Error;
 
-/// A boxed future. `Send` everywhere except on wasm, where host HTTP futures
-/// are single-threaded.
-#[cfg(not(target_family = "wasm"))]
+/// A boxed `Send` future. `Send` on wasm too: server frameworks such as
+/// Leptos and axum require it, and Spin's outgoing HTTP futures are `Send`.
+/// Wrap a host future that is not (`send_wrapper`) on single-threaded wasm.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
-/// A boxed future. `Send` everywhere except on wasm, where host HTTP futures
-/// are single-threaded.
-#[cfg(target_family = "wasm")]
-pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
-
-/// `Send + Sync` everywhere except on wasm.
-#[cfg(not(target_family = "wasm"))]
-pub trait MaybeSendSync: Send + Sync {}
-#[cfg(not(target_family = "wasm"))]
-impl<T: Send + Sync + ?Sized> MaybeSendSync for T {}
-/// `Send + Sync` everywhere except on wasm.
-#[cfg(target_family = "wasm")]
-pub trait MaybeSendSync {}
-#[cfg(target_family = "wasm")]
-impl<T: ?Sized> MaybeSendSync for T {}
 
 /// One attempt, ready to send.
 #[derive(Clone, Debug)]
@@ -63,7 +48,7 @@ pub struct TransportResponse {
 /// [`Error::Connection`] for any other failure to send or read. The client
 /// masks credentials in a `Connection` message, so the message may quote the
 /// underlying error as is.
-pub trait Transport: MaybeSendSync + 'static {
+pub trait Transport: Send + Sync + 'static {
     fn send(&self, request: TransportRequest) -> BoxFuture<'_, Result<TransportResponse, Error>>;
 
     /// Waits before a retry. A transport without a timer can return at once,
