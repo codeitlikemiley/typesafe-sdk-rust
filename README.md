@@ -14,7 +14,7 @@ Requires Rust 1.85 or later. Edition 2024.
 
 ```toml
 [dependencies]
-typesafe-sdk = "0.3"
+typesafe-sdk = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde_json = "1"
 ```
@@ -24,12 +24,12 @@ This crate requires `serde_json = "1.0.134"`, a minimum rather than a pin: any 1
 For non-async scripts, enable `blocking`:
 
 ```toml
-typesafe-sdk = { version = "0.3", features = ["blocking"] }
+typesafe-sdk = { version = "0.4", features = ["blocking"] }
 ```
 
 The default `zstd` feature compresses large request bodies. It builds the C zstd library, so it needs a C compiler. To drop it, use `default-features = false`; bodies then go uncompressed.
 
-Upgrading? See [`CHANGELOG.md`](CHANGELOG.md). 0.3 adds Cloudflare Clef and OpenAI Decisions providers, images, box questions, and request compression, and refuses a few questions and API keys it used to send. 0.2 moved to `reqwest` 0.12 and `http` 1.
+Upgrading? See [`CHANGELOG.md`](CHANGELOG.md). 0.4 makes the HTTP stack pluggable and builds for `wasm32-wasip2`; with `default-features = false`, add the `reqwest` feature to keep the built-in client. 0.3 adds Cloudflare Clef and OpenAI Decisions providers, images, box questions, and request compression, and refuses a few questions and API keys it used to send. 0.2 moved to `reqwest` 0.12 and `http` 1.
 
 ## Call System One
 
@@ -126,6 +126,48 @@ See [`examples/custom_base_url.rs`](examples/custom_base_url.rs). The mock mount
 
 Per-call overrides go on `SystemOneOpts` (`model`, `timeout`, `retry`, `extra_headers`, `extra_body`, `assets`, `images`) or `ModelsOpts` (`timeout`, `retry`, `extra_headers`). `extra_body` is a shallow last-write-wins merge over `state`, `model`, and `questions`. An `assets` key in `extra_body` replaces the client's own, and the call then sends plain JSON without reading any image.
 
+## WebAssembly and custom transports
+
+The client builds every request (headers, zstd, multipart images), retries, and decodes the answers. A `Transport` only moves bytes and waits between retries. The default is `ReqwestTransport`, behind the `reqwest` feature. On `wasm32-wasip2` hosts such as Spin, reqwest and Tokio do not run, so turn the default features off and pass your own transport with `ClientBuilder::transport`:
+
+```toml
+typesafe-sdk = { version = "0.4", default-features = false }
+```
+
+```rust
+use std::time::Duration;
+use typesafe_sdk::transport::BoxFuture;
+use typesafe_sdk::{Client, Compression, Error, Transport, TransportRequest, TransportResponse};
+
+struct HostHttp;
+
+impl Transport for HostHttp {
+    fn send(&self, request: TransportRequest) -> BoxFuture<'_, Result<TransportResponse, Error>> {
+        Box::pin(async move {
+            // Send `request.method`, `request.url`, `request.headers` and
+            // `request.body` with the host's outgoing HTTP. Return every status;
+            // the client turns non-2xx into `Error::Api` and decides on retries.
+            // Map a failure to `Error::Timeout { timeout: request.timeout }` or
+            // `Error::Connection { message }` (credentials in it are masked).
+            todo!()
+        })
+    }
+
+    fn sleep(&self, duration: Duration) -> BoxFuture<'_, ()> {
+        // The host's timer. Without one, return at once and disable retries.
+        todo!()
+    }
+}
+
+let client = Client::builder()
+    .api_key("sk-...")
+    .compression(Compression::None)
+    .transport(HostHttp)
+    .build()?;
+```
+
+`zstd` needs a C toolchain for the target, so leave it off on wasm and set `Compression::None`. `BoxFuture` is `Send` and `Transport` is `Send + Sync` on every target, as server frameworks such as Leptos and axum require; Spin's outgoing HTTP futures already are. Wrap a host future that is not (for example with `send_wrapper`). `Image::from_path` reads with `std::fs` there. CI checks `wasm32-wasip2` with and without the provider features. A transport also stands in for an HTTP stack in tests: see [`tests/transport.rs`](tests/transport.rs).
+
 ## Providers
 
 One client serves three decision backends. The questions, the answers, and `system_one`/`system_one_opts` are the same on all of them; the client translates the request and the response.
@@ -137,7 +179,7 @@ One client serves three decision backends. The questions, the answers, and `syst
 | OpenAI Decisions (experimental) | `openai-decisions` | `Provider::OpenAiDecisions` | `OPENAI_API_KEY` | `https://api.openai.com` | `gpt-6-luna` |
 
 ```toml
-typesafe-sdk = { version = "0.3", features = ["clef", "openai-decisions"] }
+typesafe-sdk = { version = "0.4", features = ["clef", "openai-decisions"] }
 ```
 
 ```rust
@@ -256,7 +298,7 @@ CI runs `cargo fmt --check`, `cargo check`, `cargo clippy`, tests, and example b
 
 ## Python parity
 
-Behavior targets [typesafe-sdk-python](https://github.com/typesafe-ai/typesafe-sdk-python) 0.7.5 and its OpenAPI schema (`POST /v1/systemone`, `GET /v1/models`). The Rust crate has its own version line (0.3.0 here). It is not a version bump of the Python release.
+Behavior targets [typesafe-sdk-python](https://github.com/typesafe-ai/typesafe-sdk-python) 0.7.5 and its OpenAPI schema (`POST /v1/systemone`, `GET /v1/models`). The Rust crate has its own version line (0.4.0 here). It is not a version bump of the Python release.
 
 Look up one answer with `noul("name")`, `choice("name")`, `score("name")`, or `box_("name")`. Python's `result.nouls["name"]` maps to that call. Scan mixed types through the public `answers` map. There is no `nouls` dict. `boxes()` iterates the box answers, like Python's `result.boxes`.
 

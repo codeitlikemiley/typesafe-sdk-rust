@@ -146,7 +146,7 @@ impl Image {
         }
         let data = match &self.inner.source {
             Source::Bytes(bytes) => bytes.clone(),
-            Source::Path(path) => match tokio::fs::read(path).await {
+            Source::Path(path) => match read_file(path).await {
                 Ok(bytes) => Bytes::from(bytes),
                 Err(error) => {
                     return Err(Error::sdk(format!(
@@ -166,6 +166,16 @@ impl Image {
         };
         Ok(self.inner.resolved.get_or_init(|| resolved).clone())
     }
+}
+
+#[cfg(feature = "reqwest")]
+async fn read_file(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+    tokio::fs::read(path).await
+}
+
+#[cfg(not(feature = "reqwest"))]
+async fn read_file(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+    std::fs::read(path)
 }
 
 impl fmt::Display for Image {

@@ -63,6 +63,7 @@ mod provider;
 mod question;
 mod request;
 mod retry;
+pub mod transport;
 
 #[cfg(feature = "blocking")]
 /// Blocking client built on a current-thread Tokio runtime.
@@ -99,6 +100,9 @@ pub use json::{IntoState, JsonContent};
 pub use provider::Provider;
 pub use question::{NoulCriteria, Question};
 pub use retry::{RetryPolicy, RetryStatuses};
+#[cfg(feature = "reqwest")]
+pub use transport::ReqwestTransport;
+pub use transport::{Transport, TransportRequest, TransportResponse};
 
 /// Crate version from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
