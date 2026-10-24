@@ -1,8 +1,10 @@
 use std::marker::PhantomData;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use http::HeaderMap;
 use indexmap::IndexMap;
+#[cfg(feature = "reqwest")]
 use reqwest::Client as HttpClient;
 use serde_json::{Map, Value};
 
@@ -18,16 +20,17 @@ use crate::provider::Provider;
 use crate::question::{Question, normalize_questions};
 use crate::request::{Payload, PreparedRequest, prepare, set_retry_count};
 use crate::retry::RetryPolicy;
+use crate::transport::{Transport, TransportRequest};
 use crate::wire::SystemOneRequest;
 
 /// Asynchronous TypeSafe client.
 ///
-/// Cloning is cheap. Clones share the connection pool and the images attached
-/// with [`Client::attach_assets`].
+/// Cloning is cheap. Clones share the transport (and so the connection pool)
+/// and the images attached with [`Client::attach_assets`].
 #[derive(Clone)]
 pub struct Client {
     config: Config,
-    http: HttpClient,
+    transport: Arc<dyn Transport>,
     retry: RetryPolicy,
     attached: Attached,
 }
@@ -36,7 +39,6 @@ impl std::fmt::Debug for Client {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Client")
             .field("config", &self.config)
-            .field("http", &self.http)
             .field("retry", &self.retry)
             .finish_non_exhaustive()
     }
@@ -62,7 +64,9 @@ pub struct ClientBuilder<S> {
     timeout: Option<Duration>,
     headers: HeaderMap,
     base_url: Option<String>,
+    #[cfg(feature = "reqwest")]
     http: Option<HttpClient>,
+    transport: Option<Arc<dyn Transport>>,
     compression: Option<Compression>,
     marker: PhantomData<S>,
 }
@@ -77,9 +81,9 @@ impl<S> std::fmt::Debug for ClientBuilder<S> {
             .field("timeout", &self.timeout)
             .field("headers", &RedactedHeaders(&self.headers))
             .field("base_url", &self.base_url)
-            .field("http", &self.http)
+            .field("transport", &self.transport.as_ref().map(|_| "custom"))
             .field("compression", &self.compression)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -94,7 +98,9 @@ impl ClientBuilder<NoApiKey> {
             timeout: self.timeout,
             headers: self.headers,
             base_url: self.base_url,
+            #[cfg(feature = "reqwest")]
             http: self.http,
+            transport: self.transport,
             compression: self.compression,
             marker: PhantomData,
         }
@@ -131,18 +137,31 @@ impl ClientBuilder<ApiKeySet> {
             self.headers,
             self.compression,
         )?;
-        let http = match self.http {
-            Some(http) => http,
-            None => HttpClient::builder()
-                .timeout(config.timeout)
-                .build()
-                .map_err(|error| Error::Connection {
-                    message: error.to_string(),
-                })?,
+        let transport = match self.transport {
+            Some(transport) => transport,
+            #[cfg(feature = "reqwest")]
+            None => {
+                let http = match self.http {
+                    Some(http) => http,
+                    None => HttpClient::builder()
+                        .timeout(config.timeout)
+                        .build()
+                        .map_err(|error| Error::Connection {
+                            message: error.to_string(),
+                        })?,
+                };
+                Arc::new(crate::transport::ReqwestTransport::new(http))
+            }
+            #[cfg(not(feature = "reqwest"))]
+            None => {
+                return Err(Error::sdk(
+                    "No transport: pass ClientBuilder::transport or enable the `reqwest` feature",
+                ));
+            }
         };
         Ok(Client {
             config,
-            http,
+            transport,
             retry: self.retry.unwrap_or_default(),
             attached: Attached::default(),
         })
@@ -222,8 +241,17 @@ impl<S> ClientBuilder<S> {
     ///
     /// Pass a clone of a client you already have to share its connection pool,
     /// TLS roots, proxy, and redirect policy. Per-attempt timeouts still apply.
+    /// [`transport`](Self::transport) takes precedence.
+    #[cfg(feature = "reqwest")]
     pub fn http_client(mut self, http: HttpClient) -> Self {
         self.http = Some(http);
+        self
+    }
+
+    /// Sends requests through `transport` instead of `reqwest`. Required
+    /// without the `reqwest` feature, as on `wasm32-wasip2`.
+    pub fn transport(mut self, transport: impl Transport) -> Self {
+        self.transport = Some(Arc::new(transport));
         self
     }
 }
@@ -238,7 +266,9 @@ impl Default for ClientBuilder<NoApiKey> {
             timeout: None,
             headers: HeaderMap::new(),
             base_url: None,
+            #[cfg(feature = "reqwest")]
             http: None,
+            transport: None,
             compression: None,
             marker: PhantomData,
         }
@@ -524,7 +554,7 @@ impl Client {
                             return Err(error);
                         }
                     }
-                    tokio::time::sleep(wait).await;
+                    self.transport.sleep(wait).await;
                     attempt += 1;
                 }
                 Err(error) => return Err(error),
@@ -537,15 +567,8 @@ impl Client {
         request: &PreparedRequest,
         headers: HeaderMap,
     ) -> Result<(u16, HeaderMap, String, bytes::Bytes), Error> {
-        let mut builder = self
-            .http
-            .request(
-                reqwest::Method::from_bytes(request.method.as_bytes()).map_err(|_| {
-                    Error::sdk(format!("unsupported HTTP method {}", request.method))
-                })?,
-                &request.url,
-            )
-            .timeout(request.timeout);
+        let method = http::Method::from_bytes(request.method.as_bytes())
+            .map_err(|_| Error::sdk(format!("unsupported HTTP method {}", request.method)))?;
         if log::log_enabled!(target: "typesafe_sdk", log::Level::Debug) {
             log::debug!(
                 target: "typesafe_sdk",
@@ -556,49 +579,36 @@ impl Client {
             );
         }
         let sent = headers.clone();
-        builder = builder.headers(headers);
-        if let Some(body) = &request.body {
-            builder = builder.body(body.clone());
-        }
         let started = Instant::now();
-        let response = builder
-            .send()
+        let response = self
+            .transport
+            .send(TransportRequest {
+                method,
+                url: request.url.clone(),
+                headers,
+                body: request.body.clone(),
+                timeout: request.timeout,
+            })
             .await
-            .map_err(map_reqwest_error(request.timeout, &sent))?;
-        let status = response.status().as_u16();
-        let headers = response.headers().clone();
+            .map_err(|error| match error {
+                Error::Connection { message } => Error::Connection {
+                    message: redact_text(&message, &sent),
+                },
+                other => other,
+            })?;
         let endpoint = format_endpoint(&request.method, &request.url);
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(map_reqwest_error(request.timeout, &sent))?;
         let request_id =
-            crate::error::header_str(&headers, crate::constants::REQUEST_ID_HEADER).unwrap_or("-");
+            crate::error::header_str(&response.headers, crate::constants::REQUEST_ID_HEADER)
+                .unwrap_or("-");
         log::info!(
             target: "typesafe_sdk",
-            "{} {} <- {status} in {:.0}ms (request {request_id})",
+            "{} {} <- {} in {:.0}ms (request {request_id})",
             request.method,
             request.url,
+            response.status,
             started.elapsed().as_secs_f64() * 1000.0
         );
-        Ok((status, headers, endpoint, bytes))
-    }
-}
-
-/// A timeout, or a connection error whose message has the request's
-/// credentials masked.
-fn map_reqwest_error(
-    timeout: Duration,
-    headers: &HeaderMap,
-) -> impl FnOnce(reqwest::Error) -> Error + '_ {
-    move |error| {
-        if error.is_timeout() {
-            Error::Timeout { timeout }
-        } else {
-            Error::Connection {
-                message: redact_text(&error.without_url().to_string(), headers),
-            }
-        }
+        Ok((response.status, response.headers, endpoint, response.body))
     }
 }
 

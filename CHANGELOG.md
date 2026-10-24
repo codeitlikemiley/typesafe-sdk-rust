@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0 (unreleased)
+
+### Added
+- `Transport`, `TransportRequest`, `TransportResponse` and `ClientBuilder::transport`: send requests through any HTTP stack. The client still builds, compresses, retries, and decodes; the transport moves bytes and waits between retries. Connection messages a transport returns are masked like reqwest's.
+- `ReqwestTransport`, the default transport, behind the new default `reqwest` feature.
+- The crate builds for `wasm32-wasip2` with `default-features = false`, for hosts such as Spin. On wasm, `BoxFuture` and `Transport` have no `Send`/`Sync` bounds, and `Image::from_path` reads with `std::fs`. CI checks the wasm build.
+
+### Changed
+- **Breaking:** `reqwest` and `tokio` are optional, enabled by the `reqwest` feature (default). With `default-features = false`, add `features = ["reqwest"]` to keep the built-in client, or pass a transport; `build()` without either returns `Error::Sdk`. `ClientBuilder::http_client` needs the `reqwest` feature, and `blocking` enables it.
+- `Client`'s `Debug` output no longer shows the reqwest client.
+
 ## 0.3.0 (2026-10-17)
 
 Parity with Python `typesafe-sdk` 0.7.5: image assets, box questions, zstd request compression, the request and API key checks of 0.7.1 and 0.7.3, and a typed decode of the raw response for 0.7.0's `response_model`. Also two more decision backends behind cargo features: Cloudflare Clef and OpenAI Decisions (experimental).

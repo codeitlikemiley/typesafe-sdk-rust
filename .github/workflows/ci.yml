@@ -27,6 +27,18 @@ jobs:
       - run: cargo check --features "mock blocking"
       - run: cargo check --features "mock blocking clef openai-decisions"
 
+  wasm:
+    name: wasm32-wasip2 (no reqwest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+          components: clippy
+      - run: cargo clippy --lib --target wasm32-wasip2 --no-default-features -- -D warnings
+      - run: cargo clippy --lib --target wasm32-wasip2 --no-default-features --features "clef openai-decisions" -- -D warnings
+
   clippy:
     name: clippy
     runs-on: ubuntu-latest
